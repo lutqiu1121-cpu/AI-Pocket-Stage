@@ -6,6 +6,14 @@ lifecycle = "2.11.0"
 activityCompose = "1.13.0"
 composeBom = "2026.09.00"
 haze = "2.0.0"
+# 第三期：epublib 原坐标 nl.siegmann.epublib:epublib-core:3.1 只存在于已关停的 JCenter，
+# Maven Central 上同一份 3.1 由 com.positiondev.epublib 发布（包名 / 字节码一致）。
+epublib = "3.1"
+okhttp = "4.12.0"
+coil = "2.7.0"
+# 1.6.3 与 Kotlin 2.4 的序列化编译器插件存在版本落差，按「冲突就取最新稳定版」升到 1.11.0。
+serializationJson = "1.11.0"
+junit = "4.13.2"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -19,7 +27,13 @@ androidx-compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "u
 androidx-material3 = { group = "androidx.compose.material3", name = "material3" }
 haze = { group = "dev.chrisbanes.haze", name = "haze", version.ref = "haze" }
 haze-glass = { group = "dev.chrisbanes.haze", name = "haze-glass", version.ref = "haze" }
+epublib-core = { group = "com.positiondev.epublib", name = "epublib-core", version.ref = "epublib" }
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
+kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serializationJson" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 android {
@@ -12,8 +13,8 @@ android {
         applicationId = "com.lutqiu.lumiread"
         minSdk = 29
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0-alpha"
+        versionCode = 3
+        versionName = "0.1.2-alpha"
     }
 
     buildTypes {
@@ -30,11 +31,26 @@ android {
     buildFeatures {
         compose = true
     }
+
+    testOptions {
+        unitTests {
+            // RequestQueue 在异常分支会打 android.util.Log；纯 JVM 单测下返回默认值即可，不必引入 Robolectric。
+            isReturnDefaultValues = true
+        }
+    }
 }
 
 kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
+}
+
+// 单测要能看到队列串行日志（时间戳由测试自己加），故把测试输出透传到控制台。
+tasks.withType<Test>().configureEach {
+    testLogging {
+        showStandardStreams = true
+        events("passed", "failed", "skipped")
     }
 }
 
@@ -49,9 +65,21 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.material3)
 
-    // 底座自带毛玻璃库（Haze 2.0.0）：对话框 / 顶部信息栏 / 悬浮按钮的模糊取景。
+    // 毛玻璃（底座自带 Haze 2.0.0）
     implementation(libs.haze)
     implementation(libs.haze.glass)
 
+    // 第三期：文件解析 / 网络队列 / 图片加载 / 本地序列化
+    implementation(libs.epublib.core) {
+        // epublib 3.1 的传递依赖里 xmlpull 与 kxml2 各自打包了一份 org.xmlpull.v1.*，
+        // 同时进包会 duplicate class；kxml2 已自带同包，故排除独立的 xmlpull。
+        exclude(group = "xmlpull")
+    }
+    implementation(libs.okhttp)
+    implementation(libs.coil.compose)
+    implementation(libs.kotlinx.serialization.json)
+
     debugImplementation(libs.androidx.compose.ui.tooling)
+
+    testImplementation(libs.junit)
 }
