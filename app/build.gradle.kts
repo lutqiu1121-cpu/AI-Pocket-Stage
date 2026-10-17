@@ -4,16 +4,16 @@ plugins {
 }
 
 android {
-    namespace = "com.situ.aichat"
+    namespace = "com.lutqiu.lumiread"
     compileSdk = 37
     buildToolsVersion = "37.0.0"
 
     defaultConfig {
-        applicationId = "com.situ.aichat"
+        applicationId = "com.lutqiu.lumiread"
         minSdk = 29
         targetSdk = 36
         versionCode = 1
-        versionName = "0.1.0-stage"
+        versionName = "0.1.0-alpha"
     }
 
     buildTypes {

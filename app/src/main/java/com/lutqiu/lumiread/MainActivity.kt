@@ -1,10 +1,10 @@
-package com.situ.aichat
+package com.lutqiu.lumiread
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import com.situ.aichat.ui.stage.StageScreen
+import com.lutqiu.lumiread.ui.stage.StageScreen
 
 /**
  * 第一期唯一入口：全屏静态 16:9 舞台。

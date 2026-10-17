@@ -1,6 +1,6 @@
 @file:OptIn(ExperimentalHazeApi::class)
 
-package com.situ.aichat.ui.stage
+package com.lutqiu.lumiread.ui.stage
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
