@@ -19,7 +19,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -111,6 +113,9 @@ fun BookshelfScreen(
             modifier = modifier
                 .fillMaxSize()
                 .background(CanvasGray)
+                // 书架根布局必须避开系统状态栏，否则「书架」标题会被时间 / 电量压住
+                .statusBarsPadding()
+                .navigationBarsPadding()
                 .padding(horizontal = 20.dp),
         ) {
             Spacer(Modifier.height(28.dp))

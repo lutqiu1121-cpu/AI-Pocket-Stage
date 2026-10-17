@@ -1,5 +1,8 @@
 package com.lutqiu.lumiread.ui.reader
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -33,6 +36,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -46,6 +50,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextIndent
@@ -53,6 +58,9 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.lutqiu.lumiread.data.Book
 import com.lutqiu.lumiread.data.BookFormat
 import com.lutqiu.lumiread.data.Chapter
@@ -63,12 +71,12 @@ import java.time.format.DateTimeFormatter
 // ─────────────────────────────────────────────────────────────────────────────
 // 普通文字阅读器（第三期起替代纯黑 VN 骨架作为默认进入方式）
 //
-// 交互约定（因为「点中间」既要显隐状态栏、又要呼出设置面板，这里按节奏拆开）：
-//   · 点顶部 / 底部区域   → 状态栏 + 返回按钮 显示 ⇄ 隐藏（全屏沉浸）
-//   · 沉浸态点中间        → 先唤回状态栏
-//   · 已显示时点中间      → 弹出设置面板（ModalBottomSheet）
-//   · 点顶栏右侧「Aa」    → 任何时候都能直接打开设置面板
-//   · 长按正文            → Toast「正在分析上下文，准备切换 VN 模式...」（第四期接 AI）
+// 交互约定（严格按屏幕坐标分区）：
+//   · 屏幕中心 60% 区域（X 20%~80% 且 Y 20%~80%）→ 弹出设置面板
+//   · 四周边缘（上下 20% + 左右边缘）→ 只切换顶底栏显隐，绝不弹面板
+//   · 点顶栏右侧「Aa」→ 任何时候直接打开设置面板
+//   · 长按正文 → Toast「正在分析上下文，准备切换 VN 模式...」（下一期接 AI）
+//   · 进入本页即隐藏系统状态栏 / 导航栏，退出时恢复
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** 阅读背景主题：白 / 米黄 / 深灰。 */
@@ -90,7 +98,21 @@ fun ReaderScreen(
     initialChapterIndex: Int = 0,
 ) {
     val context = LocalContext.current
+    val view = LocalView.current
     val chapter: Chapter? = book.chapters.getOrNull(initialChapterIndex)
+
+    // 进入阅读页 → 系统状态栏 / 导航栏完全隐藏；离开（返回书架）时恢复。
+    DisposableEffect(view) {
+        val window = view.context.findActivity()?.window
+        val controller = window?.let { WindowCompat.getInsetsController(it, view) }
+        controller?.apply {
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            hide(WindowInsetsCompat.Type.systemBars())
+        }
+        onDispose {
+            controller?.show(WindowInsetsCompat.Type.systemBars())
+        }
+    }
 
     // 沉浸（状态栏 / 返回按钮显隐）
     var chromeVisible by rememberSaveable { mutableStateOf(true) }
@@ -127,13 +149,19 @@ fun ReaderScreen(
             .pointerInput(Unit) {
                 detectTapGestures(
                     onTap = { offset ->
+                        val width = size.width.toFloat()
                         val height = size.height.toFloat()
-                        val inTopBand = offset.y < height * 0.18f
-                        val inBottomBand = offset.y > height * 0.82f
-                        when {
-                            inTopBand || inBottomBand -> chromeVisible = !chromeVisible
-                            chromeVisible -> sheetVisible = true
-                            else -> chromeVisible = true
+
+                        // 中间安全区：X 在 20%~80%、Y 在 20%~80%（屏幕中心 60% 区域）
+                        val isCenterClick = offset.x > width * 0.2f && offset.x < width * 0.8f &&
+                            offset.y > height * 0.2f && offset.y < height * 0.8f
+
+                        if (isCenterClick) {
+                            // 只有正中心才允许弹设置面板
+                            sheetVisible = true
+                        } else {
+                            // 四周边缘只切换顶底栏显隐，绝不弹面板
+                            chromeVisible = !chromeVisible
                         }
                     },
                     onLongPress = {
@@ -477,6 +505,12 @@ private fun PaletteDot(
 
 private fun Modifier.border1dp(color: Color): Modifier =
     this.border(width = 1.dp, color = color, shape = CircleShape)
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
 
 private fun formatClock(time: LocalTime): String =
     time.format(DateTimeFormatter.ofPattern("HH:mm"))
