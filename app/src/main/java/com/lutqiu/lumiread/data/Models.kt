@@ -2,6 +2,13 @@ package com.lutqiu.lumiread.data
 
 import kotlinx.serialization.Serializable
 
+/** 进入一本书的方式：普通阅读 / VN 剧场。 */
+@Serializable
+enum class ReadingMode {
+    READER,
+    VN,
+}
+
 /** 书籍格式。 */
 @Serializable
 enum class BookFormat {

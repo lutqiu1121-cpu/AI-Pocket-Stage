@@ -30,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -46,6 +47,7 @@ import androidx.compose.ui.unit.sp
 import com.lutqiu.lumiread.data.Book
 import com.lutqiu.lumiread.data.BookFormat
 import com.lutqiu.lumiread.data.BookStore
+import com.lutqiu.lumiread.data.ReadingMode
 import com.lutqiu.lumiread.services.ParserService
 import kotlinx.coroutines.launch
 
@@ -61,13 +63,15 @@ private val PICKER_MIME = arrayOf("text/plain", "application/epub+zip")
 
 @Composable
 fun BookshelfScreen(
-    onOpenBook: (Book) -> Unit,
+    onOpenBook: (Book, ReadingMode) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
     var books by remember { mutableStateOf<List<Book>>(emptyList()) }
+    // 每本书进入方式（文本阅读 / 剧场 VN）；默认普通阅读
+    val modes = remember { mutableStateMapOf<String, ReadingMode>() }
     var importing by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
 
@@ -155,7 +159,16 @@ fun BookshelfScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     items(items = books, key = { it.id }) { book ->
-                        BookRow(book = book, onClick = { onOpenBook(book) })
+                        val mode = modes[book.id] ?: ReadingMode.READER
+                        BookRow(
+                            book = book,
+                            mode = mode,
+                            onToggleMode = {
+                                modes[book.id] =
+                                    if (mode == ReadingMode.READER) ReadingMode.VN else ReadingMode.READER
+                            },
+                            onClick = { onOpenBook(book, mode) },
+                        )
                     }
                 }
             }
@@ -206,7 +219,12 @@ private fun EmptyState() {
 }
 
 @Composable
-private fun BookRow(book: Book, onClick: () -> Unit) {
+private fun BookRow(
+    book: Book,
+    mode: ReadingMode,
+    onToggleMode: () -> Unit,
+    onClick: () -> Unit,
+) {
     Surface(
         shape = RoundedCornerShape(14.dp),
         color = Color.White,
@@ -248,11 +266,38 @@ private fun BookRow(book: Book, onClick: () -> Unit) {
                 )
             }
 
+            ModeChip(mode = mode, onClick = onToggleMode)
+
+            Spacer(Modifier.width(6.dp))
+
             Text(
                 text = "›",
                 style = TextStyle(fontSize = 20.sp, color = SubInk),
             )
         }
+    }
+}
+
+/** 「文本 / 剧场」模式切换胶囊：点一下切换进入方式，不影响「点卡片打开」。 */
+@Composable
+private fun ModeChip(mode: ReadingMode, onClick: () -> Unit) {
+    val isReader = mode == ReadingMode.READER
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(if (isReader) Accent.copy(alpha = 0.12f) else Color(0xFF7C5CFF).copy(alpha = 0.14f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = if (isReader) "文本" else "剧场",
+            style = TextStyle(
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                color = if (isReader) Accent else Color(0xFF7C5CFF),
+            ),
+        )
     }
 }
 
