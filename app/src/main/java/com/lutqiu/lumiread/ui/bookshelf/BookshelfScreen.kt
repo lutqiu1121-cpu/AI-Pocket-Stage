@@ -77,9 +77,37 @@ fun BookshelfScreen(
     var importing by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
 
-    // 恢复上次导入的书架
+    // 恢复上次导入的书架；旧解析器切出来的 EPUB 自动按新逻辑重解析（修复历史缓存里的目录页/乱码）
     LaunchedEffect(Unit) {
-        books = BookStore.load(context)
+        val loaded = BookStore.load(context)
+        books = loaded
+
+        val stale = loaded.filter {
+            it.format == BookFormat.EPUB && it.parsedWith < ParserService.PARSER_VERSION
+        }
+        if (stale.isEmpty()) return@LaunchedEffect
+
+        importing = true
+        var updated = loaded
+        stale.forEach { oldBook ->
+            val uri = runCatching { Uri.parse(oldBook.id) }.getOrNull() ?: return@forEach
+            val chapters = runCatching { ParserService.parseEpub(context, uri) }.getOrDefault(emptyList())
+            if (chapters.isNotEmpty()) {
+                val title = runCatching { ParserService.readEpubTitle(context, uri) }.getOrNull()
+                    ?: oldBook.title
+                updated = updated.map {
+                    if (it.id == oldBook.id) {
+                        it.copy(title = title, chapters = chapters, parsedWith = ParserService.PARSER_VERSION)
+                    } else {
+                        it
+                    }
+                }
+            }
+        }
+        books = updated
+        BookStore.save(context, updated)
+        importing = false
+        message = "已按新解析器重新切分 ${stale.size} 本 EPUB"
     }
 
     val picker = rememberLauncherForActivityResult(
@@ -346,6 +374,7 @@ private suspend fun importBook(context: Context, uri: Uri): Book? {
         title = title.ifBlank { "未命名" },
         format = format,
         importedAt = System.currentTimeMillis(),
+        parsedWith = ParserService.PARSER_VERSION,
         chapters = chapters,
     )
 }

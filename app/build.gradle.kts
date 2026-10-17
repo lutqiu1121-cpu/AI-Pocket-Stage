@@ -13,8 +13,8 @@ android {
         applicationId = "com.lutqiu.lumiread"
         minSdk = 29
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.2.3-alpha"
+        versionCode = 6
+        versionName = "0.2.4-alpha"
     }
 
     buildTypes {
@@ -64,6 +64,7 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.material3)
+    implementation(libs.androidx.material.icons.core)
 
     // 毛玻璃（底座自带 Haze 2.0.0）
     implementation(libs.haze)

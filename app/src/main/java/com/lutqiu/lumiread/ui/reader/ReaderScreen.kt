@@ -21,15 +21,23 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List as MenuListIcon
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
@@ -39,6 +47,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -69,14 +78,15 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 普通文字阅读器（第三期起替代纯黑 VN 骨架作为默认进入方式）
+// 普通文字阅读器（v0.2.4：目录 + 章节跳转 + 章节内分页）
 //
 // 交互约定（严格按屏幕坐标分区）：
-//   · 屏幕中心 60% 区域（X 20%~80% 且 Y 20%~80%）→ 弹出设置面板
+//   · 屏幕中心 60% 区域（X 20%~80% 且 Y 20%~80%）→ 弹出阅读设置面板
 //   · 四周边缘（上下 20% + 左右边缘）→ 只切换顶底栏显隐，绝不弹面板
-//   · 点顶栏右侧「Aa」→ 任何时候直接打开设置面板
-//   · 长按正文 → Toast「正在分析上下文，准备切换 VN 模式...」（下一期接 AI）
+//   · 顶栏「目录」图标 → 目录面板；「Aa」→ 阅读设置；两者独立于分区
+//   · 长按正文 → Toast「正在分析上下文，准备切换 VN 模式...」
 //   · 进入本页即隐藏系统状态栏 / 导航栏，退出时恢复
+//   · 章节内超过 1000 字自动分页，左右滑动翻页（每页内仍可上下滚动）
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** 阅读背景主题：白 / 米黄 / 深灰。 */
@@ -88,6 +98,13 @@ private enum class ReaderPalette(val label: String, val background: Color, val i
 
 private val DividerGray = Color(0xFFEEEEEE)
 private val SheetContainer = Color(0xFFF7F8FA)
+private val AccentBlue = Color(0xFF3B82F6)
+
+/** 每个分页的目标字数。 */
+private const val PAGE_CHARS = 1000
+
+/** 超过这个字数才启用分页（短章节一页到底）。 */
+private const val PAGING_THRESHOLD = 2000
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -99,7 +116,6 @@ fun ReaderScreen(
 ) {
     val context = LocalContext.current
     val view = LocalView.current
-    val chapter: Chapter? = book.chapters.getOrNull(initialChapterIndex)
 
     // 进入阅读页 → 系统状态栏 / 导航栏完全隐藏；离开（返回书架）时恢复。
     DisposableEffect(view) {
@@ -114,21 +130,38 @@ fun ReaderScreen(
         }
     }
 
-    // 沉浸（状态栏 / 返回按钮显隐）
+    val lastIndex = (book.chapters.size - 1).coerceAtLeast(0)
+    var chapterIndex by rememberSaveable(book.id) {
+        mutableIntStateOf(initialChapterIndex.coerceIn(0, lastIndex))
+    }
+
+    // 沉浸（顶栏 / 底栏显隐）
     var chromeVisible by rememberSaveable { mutableStateOf(true) }
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
+    var tocVisible by rememberSaveable { mutableStateOf(false) }
 
-    // 阅读设置：全部 rememberSaveable，转屏 / 进程内重组都不丢
+    // 阅读设置：rememberSaveable，转屏 / 进程内重组都不丢
     var paletteIndex by rememberSaveable { mutableIntStateOf(0) }
     var fontSize by rememberSaveable { mutableStateOf(18f) }
     var lineHeightMultiplier by rememberSaveable { mutableStateOf(1.6f) }
     var aiEnabled by rememberSaveable { mutableStateOf(true) }
 
     val palette = ReaderPalette.entries[paletteIndex]
-    val scrollState = rememberScrollState()
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val chapter: Chapter? = book.chapters.getOrNull(chapterIndex)
 
-    // 底部状态栏：当前时间（每 30s 刷新，省电且看不出跳秒）
+    // 章节内分页：长章按 ~1000 字切页；短章就一页。
+    val pages = remember(chapterIndex, chapter?.content) {
+        paginate(chapter?.content.orEmpty())
+    }
+    // key(chapterIndex)：换章重建 pager，自动回到第一页
+    val pagerState = key(chapterIndex) {
+        rememberPagerState(pageCount = { pages.size.coerceAtLeast(1) })
+    }
+
+    val settingsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val tocSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    // 底部状态栏：当前时间（每 30s 刷新）
     var nowText by remember { mutableStateOf(formatClock(LocalTime.now())) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -137,15 +170,13 @@ fun ReaderScreen(
         }
     }
 
-    // 阅读进度：滚动比例
-    val progressPercent =
-        if (scrollState.maxValue <= 0) 100 else scrollState.value * 100 / scrollState.maxValue
+    val percent = ((pagerState.currentPage + 1) * 100 / pages.size.coerceAtLeast(1)).coerceIn(0, 100)
 
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(palette.background)
-            // 单击：分区处理显隐 / 设置；长按：AI 分析入口（本期只 Toast）
+            // 单击分区 / 长按 AI 入口
             .pointerInput(Unit) {
                 detectTapGestures(
                     onTap = { offset ->
@@ -174,27 +205,33 @@ fun ReaderScreen(
                 )
             },
     ) {
-        // ① 正文
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-                .verticalScroll(scrollState)
-                .padding(24.dp),
-        ) {
-            Text(
-                text = chapter?.content.orEmpty(),
-                style = TextStyle(
-                    color = palette.ink,
-                    fontSize = fontSize.sp,
-                    lineHeight = (fontSize * lineHeightMultiplier).sp,
-                    textIndent = TextIndent(firstLine = 2.em),
-                    letterSpacing = 0.2.sp,
-                ),
-            )
+        // ① 正文（横向分页；每页内部可纵向滚动）
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxSize(),
+        ) { page ->
+            val pageText = pages.getOrElse(page) { "" }
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .verticalScroll(rememberScrollState())
+                    .padding(24.dp),
+            ) {
+                Text(
+                    text = pageText,
+                    style = TextStyle(
+                        color = palette.ink,
+                        fontSize = fontSize.sp,
+                        lineHeight = (fontSize * lineHeightMultiplier).sp,
+                        textIndent = TextIndent(firstLine = 2.em),
+                        letterSpacing = 0.2.sp,
+                    ),
+                )
+            }
         }
 
-        // ② 顶部：返回按钮 + 分割线
+        // ② 顶部：返回 / 目录 / Aa + 分割线
         AnimatedVisibility(
             visible = chromeVisible,
             modifier = Modifier.align(Alignment.TopCenter),
@@ -204,11 +241,18 @@ fun ReaderScreen(
             ReaderTopBar(
                 palette = palette,
                 onBack = onBack,
-                onOpenSettings = { sheetVisible = true },
+                onOpenToc = {
+                    sheetVisible = false
+                    tocVisible = true
+                },
+                onOpenSettings = {
+                    tocVisible = false
+                    sheetVisible = true
+                },
             )
         }
 
-        // ③ 底部：40dp 分割线 + 时间 / 进度
+        // ③ 底部：40dp 状态栏（时间 / 章节 + 页码进度）
         AnimatedVisibility(
             visible = chromeVisible,
             modifier = Modifier.align(Alignment.BottomCenter),
@@ -218,17 +262,36 @@ fun ReaderScreen(
             ReaderBottomBar(
                 palette = palette,
                 time = nowText,
-                chapterLabel = "第${(chapter?.index ?: 0) + 1}章",
-                percent = progressPercent,
+                chapterLabel = "第${chapterIndex + 1}章",
+                percent = percent,
+                pageLabel = if (pages.size > 1) "${pagerState.currentPage + 1}/${pages.size}" else null,
             )
         }
     }
 
-    // ④ 设置面板
+    // ④ 目录面板
+    if (tocVisible) {
+        ModalBottomSheet(
+            onDismissRequest = { tocVisible = false },
+            sheetState = tocSheetState,
+            containerColor = SheetContainer,
+        ) {
+            TocPanel(
+                chapters = book.chapters,
+                currentIndex = chapterIndex,
+                onSelect = { index ->
+                    chapterIndex = index
+                    tocVisible = false
+                },
+            )
+        }
+    }
+
+    // ⑤ 阅读设置面板
     if (sheetVisible) {
         ModalBottomSheet(
             onDismissRequest = { sheetVisible = false },
-            sheetState = sheetState,
+            sheetState = settingsSheetState,
             containerColor = SheetContainer,
         ) {
             ReaderSettingsPanel(
@@ -245,12 +308,89 @@ fun ReaderScreen(
     }
 }
 
+// ── 目录面板 ────────────────────────────────────────────────────────────────
+
+@Composable
+private fun TocPanel(
+    chapters: List<Chapter>,
+    currentIndex: Int,
+    onSelect: (Int) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                text = "目录",
+                style = TextStyle(fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF1F2024)),
+            )
+            Text(
+                text = "共 ${chapters.size} 章",
+                style = TextStyle(fontSize = 12.sp, color = Color(0xFF9AA0A6)),
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        if (chapters.isEmpty()) {
+            Text(
+                text = "没有解析到章节",
+                style = TextStyle(fontSize = 13.sp, color = Color(0xFF9AA0A6)),
+                modifier = Modifier.padding(vertical = 24.dp),
+            )
+        } else {
+            LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+                itemsIndexed(items = chapters, key = { index, _ -> index }) { index, chapter ->
+                    val current = index == currentIndex
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable { onSelect(index) }
+                            .background(if (current) AccentBlue.copy(alpha = 0.10f) else Color.Transparent)
+                            .padding(horizontal = 12.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = (index + 1).toString().padStart(3, ' '),
+                            style = TextStyle(
+                                fontSize = 11.sp,
+                                color = if (current) AccentBlue else Color(0xFFB0B4BA),
+                            ),
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            text = chapter.title,
+                            style = TextStyle(
+                                fontSize = 14.sp,
+                                fontWeight = if (current) FontWeight.SemiBold else FontWeight.Normal,
+                                // 当前章用主题色加亮
+                                color = if (current) AccentBlue else Color(0xFF3A3D42),
+                            ),
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
 // ── 顶栏 ────────────────────────────────────────────────────────────────────
 
 @Composable
 private fun ReaderTopBar(
     palette: ReaderPalette,
     onBack: () -> Unit,
+    onOpenToc: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
     Column(
@@ -267,26 +407,43 @@ private fun ReaderTopBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            // 返回
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .clickable(onClick = onBack)
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "‹",
-                    style = TextStyle(fontSize = 22.sp, color = palette.ink, fontWeight = FontWeight.Light),
-                )
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    text = "返回",
-                    style = TextStyle(fontSize = 14.sp, color = palette.ink),
-                )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // 返回
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .clickable(onClick = onBack)
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "‹",
+                        style = TextStyle(fontSize = 22.sp, color = palette.ink, fontWeight = FontWeight.Light),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = "返回",
+                        style = TextStyle(fontSize = 14.sp, color = palette.ink),
+                    )
+                }
+
+                // 目录
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .clickable(onClick = onOpenToc)
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.MenuListIcon,
+                        contentDescription = "目录",
+                        tint = palette.ink,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
             }
 
-            // 设置入口（任何时候都能开面板，避免「必须点中间」的死角）
+            // 阅读设置入口
             Text(
                 text = "Aa",
                 modifier = Modifier
@@ -315,13 +472,14 @@ private fun ReaderBottomBar(
     time: String,
     chapterLabel: String,
     percent: Int,
+    pageLabel: String?,
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(palette.background),
     ) {
-        // 底部分割线：距离屏幕底部 40dp（下面这一行就是 40dp 高的状态栏）
+        // 底部分割线：下方 40dp 即状态栏
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -340,15 +498,23 @@ private fun ReaderBottomBar(
                 text = time,
                 style = TextStyle(fontSize = 11.sp, color = palette.ink.copy(alpha = 0.55f)),
             )
-            Text(
-                text = "$chapterLabel $percent%",
-                style = TextStyle(fontSize = 11.sp, color = palette.ink.copy(alpha = 0.55f)),
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                pageLabel?.let {
+                    Text(
+                        text = "$it · ",
+                        style = TextStyle(fontSize = 11.sp, color = palette.ink.copy(alpha = 0.4f)),
+                    )
+                }
+                Text(
+                    text = "$chapterLabel $percent%",
+                    style = TextStyle(fontSize = 11.sp, color = palette.ink.copy(alpha = 0.55f)),
+                )
+            }
         }
     }
 }
 
-// ── 设置面板（ModalBottomSheet 内容）────────────────────────────────────────
+// ── 设置面板 ────────────────────────────────────────────────────────────────
 
 @Composable
 private fun ReaderSettingsPanel(
@@ -373,7 +539,6 @@ private fun ReaderSettingsPanel(
 
         Spacer(Modifier.height(20.dp))
 
-        // 背景色
         Text("背景色", style = TextStyle(fontSize = 13.sp, color = Color(0xFF6B7078)))
         Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -388,7 +553,6 @@ private fun ReaderSettingsPanel(
 
         Spacer(Modifier.height(22.dp))
 
-        // 字号 14–24
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -396,7 +560,7 @@ private fun ReaderSettingsPanel(
             Text("字号", style = TextStyle(fontSize = 13.sp, color = Color(0xFF6B7078)))
             Text(
                 text = "${fontSize.toInt()}sp",
-                style = TextStyle(fontSize = 13.sp, color = Color(0xFF3B82F6)),
+                style = TextStyle(fontSize = 13.sp, color = AccentBlue),
             )
         }
         Slider(
@@ -408,7 +572,6 @@ private fun ReaderSettingsPanel(
 
         Spacer(Modifier.height(8.dp))
 
-        // 行间距
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -416,7 +579,7 @@ private fun ReaderSettingsPanel(
             Text("行间距", style = TextStyle(fontSize = 13.sp, color = Color(0xFF6B7078)))
             Text(
                 text = String.format("%.1f×", lineHeightMultiplier),
-                style = TextStyle(fontSize = 13.sp, color = Color(0xFF3B82F6)),
+                style = TextStyle(fontSize = 13.sp, color = AccentBlue),
             )
         }
         Slider(
@@ -430,7 +593,6 @@ private fun ReaderSettingsPanel(
         Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(DividerGray))
         Spacer(Modifier.height(16.dp))
 
-        // AI 智能分析总开关
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -465,46 +627,62 @@ private fun PaletteDot(
                 .size(34.dp)
                 .clip(CircleShape)
                 .background(palette.background)
+                .border(
+                    width = 1.dp,
+                    color = if (selected) AccentBlue else Color(0xFFE3E5E8),
+                    shape = CircleShape,
+                )
                 .clickable(onClick = onClick),
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clip(CircleShape)
-                    .background(Color.Transparent),
-            ) {
-                if (selected) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .clip(CircleShape)
-                            .background(Color(0xFF3B82F6).copy(alpha = 0.18f)),
-                    )
-                }
+            if (selected) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(CircleShape)
+                        .background(AccentBlue.copy(alpha = 0.18f)),
+                )
             }
-            // 深色系靠描边区分，浅色系靠边缘一层浅灰
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clip(CircleShape)
-                    .then(
-                        Modifier.border1dp(if (selected) Color(0xFF3B82F6) else Color(0xFFE3E5E8)),
-                    ),
-            )
         }
         Spacer(Modifier.height(6.dp))
         Text(
             text = palette.label,
             style = TextStyle(
                 fontSize = 10.sp,
-                color = if (selected) Color(0xFF3B82F6) else Color(0xFF9AA0A6),
+                color = if (selected) AccentBlue else Color(0xFF9AA0A6),
             ),
         )
     }
 }
 
-private fun Modifier.border1dp(color: Color): Modifier =
-    this.border(width = 1.dp, color = color, shape = CircleShape)
+// ── 章节内分页 ──────────────────────────────────────────────────────────────
+
+/**
+ * 把一章正文切成若干页：
+ * - 不足 [PAGING_THRESHOLD] 字 → 原样一页；
+ * - 超过则每 [PAGE_CHARS] 字一页，且优先在段落（\n\n）或句号处断页，避免断在半句话上。
+ */
+internal fun paginate(text: String, pageChars: Int = PAGE_CHARS): List<String> {
+    if (text.isEmpty()) return listOf("")
+    if (text.length <= PAGING_THRESHOLD) return listOf(text)
+
+    val pages = mutableListOf<String>()
+    var cursor = 0
+    while (cursor < text.length) {
+        val tentativeEnd = minOf(cursor + pageChars, text.length)
+        var end = tentativeEnd
+        if (tentativeEnd < text.length) {
+            val window = text.substring(cursor, tentativeEnd)
+            val cut = maxOf(window.lastIndexOf("\n\n"), window.lastIndexOf('。'))
+            if (cut >= (pageChars * 0.6).toInt()) {
+                end = cursor + cut + 1
+            }
+        }
+        val piece = text.substring(cursor, end).trim()
+        if (piece.isNotEmpty()) pages += piece
+        cursor = end
+    }
+    return pages.ifEmpty { listOf(text) }
+}
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
@@ -526,9 +704,14 @@ private fun ReaderScreenPreview() {
             chapters = listOf(
                 Chapter(
                     index = 0,
-                    title = "第一章",
+                    title = "第一章 起点",
                     content = "这是一段用于预览的正文。长按屏幕任意位置会触发 AI 分析提示，" +
-                        "点击顶部或底部区域可以切换沉浸模式，点击中间会打开阅读设置面板。",
+                        "点击屏幕中心会打开阅读设置面板，点击四周边缘可切换顶底栏显隐。",
+                ),
+                Chapter(
+                    index = 1,
+                    title = "第二章 继续",
+                    content = "第二章的正文内容。",
                 ),
             ),
         ),

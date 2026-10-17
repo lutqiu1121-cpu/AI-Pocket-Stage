@@ -66,6 +66,50 @@ class ParserServiceTest {
     }
 
     @Test
+    fun shouldSkipHref_filtersTocNavCover() {
+        // 目录 / 导航 / 封面页必须被过滤
+        assertTrue(ParserService.shouldSkipHref("OEBPS/nav.xhtml"))
+        assertTrue(ParserService.shouldSkipHref("text/toc.html"))
+        assertTrue(ParserService.shouldSkipHref("Images/cover.jpg"))
+        assertTrue(ParserService.shouldSkipHref("Text/Cover.xhtml"))
+        // 正常章节不能被误杀
+        assertFalse(ParserService.shouldSkipHref("Text/chapter1.xhtml"))
+        assertFalse(ParserService.shouldSkipHref("OEBPS/content-002.xhtml"))
+        assertFalse(ParserService.shouldSkipHref(null))
+    }
+
+    @Test
+    fun splitByHeading_splitsSingleHugeXhtml() {
+        // 整本书塞进一个 xhtml 的典型情况：清洗后正文里有多处「第N章」行
+        val blob = """
+            第一套要跟三个男生合租。
+
+            第一章 起点
+            正文一。
+            第二章 转折
+            正文二。
+            第三章 终局
+            正文三。
+        """.trimIndent()
+
+        val chapters = ParserService.splitByHeading(blob, "整本")
+
+        assertEquals("前言 + 3 章", 4, chapters.size)
+        assertEquals("整本", chapters[0].title)
+        assertEquals("第一章 起点", chapters[1].title)
+        assertEquals("第三章 终局", chapters[3].title)
+        assertTrue(chapters[2].content.contains("正文二"))
+    }
+
+    @Test
+    fun splitByHeading_keepsSingleChapterWhenNoHeadings() {
+        val text = "就只有一段正文，没有章节标题。"
+        val chapters = ParserService.splitByHeading(text, "第一章")
+        assertEquals(1, chapters.size)
+        assertEquals("第一章", chapters[0].title)
+    }
+
+    @Test
     fun splitTxt_splitsOnChapterHeadings() {
         val text = """
             前言一句话。

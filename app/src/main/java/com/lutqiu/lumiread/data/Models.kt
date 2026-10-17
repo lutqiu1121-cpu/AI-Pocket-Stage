@@ -26,6 +26,8 @@ data class Book(
     val format: BookFormat,
     val author: String = "",
     val importedAt: Long = 0L,
+    /** 用哪一版解析器切出来的；旧版本(0)会在书架加载时自动重解析。 */
+    val parsedWith: Int = 0,
     val chapters: List<Chapter> = emptyList(),
 )
 
