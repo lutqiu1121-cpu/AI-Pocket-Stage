@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.lutqiu.lumiread.data.Book
+import com.lutqiu.lumiread.services.AiScene
 import com.lutqiu.lumiread.data.ReadingMode
 import com.lutqiu.lumiread.ui.bookshelf.BookshelfScreen
 import com.lutqiu.lumiread.ui.reader.ReaderScreen
@@ -22,10 +23,24 @@ private data class OpenedBook(val book: Book, val mode: ReadingMode)
 @Composable
 fun LumiReadApp() {
     var opened by remember { mutableStateOf<OpenedBook?>(null) }
+    var aiScene by remember { mutableStateOf<AiScene?>(null) }
 
     val current = opened
     if (current == null) {
         BookshelfScreen(onOpenBook = { book, mode -> opened = OpenedBook(book, mode) })
+        return
+    }
+
+    // AI 长按 → 生成场景 → 直接进 VN 舞台
+    val scene = aiScene
+    if (scene != null) {
+        BackHandler { aiScene = null }
+        StageScreen(
+            text = scene.description,
+            chapterLabel = "AI 场景",
+            backgroundImagePath = scene.imagePath,
+            onBack = { aiScene = null },
+        )
         return
     }
 
@@ -35,6 +50,7 @@ fun LumiReadApp() {
         ReadingMode.READER -> ReaderScreen(
             book = current.book,
             onBack = { opened = null },
+            onOpenScene = { aiScene = it },
         )
 
         ReadingMode.VN -> {

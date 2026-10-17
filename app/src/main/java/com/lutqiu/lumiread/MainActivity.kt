@@ -8,6 +8,7 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import com.lutqiu.lumiread.services.RequestQueue
 import com.lutqiu.lumiread.ui.LumiReadApp
+import com.lutqiu.lumiread.ui.theme.LumiTheme
 import kotlinx.coroutines.launch
 
 /**
@@ -28,7 +29,9 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch { RequestQueue.testQueue() }
 
         setContent {
-            LumiReadApp()
+            LumiTheme {
+                LumiReadApp()
+            }
         }
     }
 }

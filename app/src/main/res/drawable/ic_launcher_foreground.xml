@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 极简「Lu 书本」Logo：摊开的书 + L / u 两个字母笔画 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 左书页 -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M51,38 L33,38 A3,3 0 0 0 30,41 L30,72 A3,3 0 0 0 33,75 L51,75 Z" />
+
+    <!-- 右书页 -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M57,38 L75,38 A3,3 0 0 1 78,41 L78,72 A3,3 0 0 1 75,75 L57,75 Z" />
+
+    <!-- 书脊 -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.2"
+        android:strokeLineCap="round"
+        android:pathData="M54,38 L54,75" />
+
+    <!-- L -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M38,46 L38,64 L47,64" />
+
+    <!-- u -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M61,48 L61,58 A5,5 0 0 0 71,58 L71,48" />
+</vector>

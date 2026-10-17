@@ -22,7 +22,7 @@ object ParserService {
     private const val TAG = "ParserService"
 
     /** 解析器版本：改动切章逻辑时 +1，书架会据此自动重解析旧缓存。 */
-    const val PARSER_VERSION = 2
+    const val PARSER_VERSION = 3
 
     /** 章节标题正则（TXT 与 EPUB 兜底共用）：第 + 数字/中文数字 + 章|节|回。 */
     private val CHAPTER_HEADING = Regex("""第[0-9一二三四五六七八九十百千万]+[章|节|回]""")
@@ -53,6 +53,12 @@ object ParserService {
 
     /** 兜底：逃过前面清洗的 CSS 规则块 { ... }。 */
     private val CSS_RULE = Regex("""(?s)\{[^{}]*\}""")
+
+    /** 文档里的章标题标签 <h1>..<h3>。 */
+    private val H_TAG = Regex("""(?is)<h[1-3]\b[^>]*>(.*?)</h[1-3]\s*>""")
+
+    /** 行首章节标题（用于正文残留标题的兜底剥离）。 */
+    private val HEADING_LINE_STRICT = Regex("""^第[0-9一二三四五六七八九十百千万]+[章|节|回].*""")
 
     private val MULTI_BLANK_LINE = Regex("""\n{3,}""")
     private val INLINE_SPACE = Regex("""[ \t\u00A0\u3000]+""")
@@ -89,10 +95,12 @@ object ParserService {
             val body = text.substring(start, end).trim()
             if (body.isEmpty()) return@forEachIndexed
             val heading = body.lineSequence().firstOrNull().orEmpty().trim().take(48)
+            // 标题只进 title，正文从标题下一行开始
+            val rest = body.removePrefix(body.lineSequence().first()).trimStart()
             chapters += Chapter(
                 index = chapters.size,
                 title = heading.ifBlank { "第${i + 1}章" },
-                content = body,
+                content = rest.ifBlank { body },
             )
         }
         return chapters
@@ -147,11 +155,14 @@ object ParserService {
                     // 同一 xhtml 被多个锚点引用（#ch1 / #ch2）只取一次，剩下的交给标题正则切
                     val key = href.substringBefore('#')
                     if (seen.add(key)) {
-                        val text = cleanHtml(resource.data?.toString(Charsets.UTF_8).orEmpty())
-                        if (text.isNotBlank()) {
-                            val title = ref.title?.trim().orEmpty()
-                                .ifBlank { "第${chapters.size + 1}章" }
-                            chapters += Chapter(index = chapters.size, title = title, content = text)
+                        val rawHtml = resource.data?.toString(Charsets.UTF_8).orEmpty()
+                        val parsed = parseXhtml(rawHtml, ref.title?.trim().orEmpty())
+                        if (parsed != null) {
+                            chapters += Chapter(
+                                index = chapters.size,
+                                title = parsed.title.ifBlank { "第${chapters.size + 1}章" },
+                                content = parsed.content,
+                            )
                         }
                     }
                 }
@@ -168,12 +179,45 @@ object ParserService {
         epub.spine.spineReferences.forEach { reference ->
             val resource = reference.resource ?: return@forEach
             if (shouldSkipHref(resource.href)) return@forEach
-            val text = cleanHtml(resource.data?.toString(Charsets.UTF_8).orEmpty())
-            if (text.isNotBlank()) {
-                val title = resource.title?.takeIf { it.isNotBlank() } ?: "第${size + 1}章"
-                add(Chapter(index = size, title = title, content = text))
+            val rawHtml = resource.data?.toString(Charsets.UTF_8).orEmpty()
+            val parsed = parseXhtml(rawHtml, resource.title.orEmpty())
+            if (parsed != null) {
+                add(Chapter(index = size, title = parsed.title.ifBlank { "第${size + 1}章" }, content = parsed.content))
             }
         }
+    }
+
+    private data class ParsedDoc(val title: String, val content: String)
+
+    /**
+     * 单个 EPUB 文档 → (标题, 正文)。
+     *
+     * 优先级：文档内 `<h1..h3>` > 正文首行的「第X章 …」> 目录项标题。
+     * 抽出来的标题**从正文里删掉**，保证正文第一段就是小说内容。
+     */
+    private fun parseXhtml(rawHtml: String, tocTitle: String): ParsedDoc? {
+        if (rawHtml.isBlank()) return null
+
+        var bodyHtml = rawHtml
+        var heading: String? = null
+
+        H_TAG.find(rawHtml)?.let { match ->
+            heading = cleanHtml(match.groupValues[1]).lineSequence().firstOrNull()?.trim()?.take(48)
+            bodyHtml = rawHtml.removeRange(match.range)
+        }
+
+        var content = cleanHtml(bodyHtml)
+        if (content.isBlank()) return null
+
+        if (heading.isNullOrBlank()) {
+            val firstLine = content.lineSequence().firstOrNull()?.trim().orEmpty()
+            if (firstLine.isNotBlank() && firstLine.length <= 48 && HEADING_LINE_STRICT.matches(firstLine)) {
+                heading = firstLine
+                content = content.removePrefix(content.lineSequence().first()).trim()
+            }
+        }
+
+        return ParsedDoc(title = heading?.takeIf { it.isNotBlank() } ?: tocTitle, content = content.trim())
     }
 
     /**
@@ -201,10 +245,11 @@ object ParserService {
             val body = text.substring(start, end).trim()
             if (body.isEmpty()) return@forEachIndexed
             val heading = body.lineSequence().firstOrNull().orEmpty().trim().take(48)
+            val rest = body.removePrefix(body.lineSequence().first()).trimStart()
             out += Chapter(
                 index = out.size,
                 title = heading.ifBlank { "第${i + 1}章" },
-                content = body,
+                content = rest.ifBlank { body },
             )
         }
         return out

@@ -96,6 +96,21 @@ object RequestQueue {
     }
 
     /**
+     * 提交一个有返回值的任务并挂起等待结果。
+     * 队列仍然是「全局单队列 + 并发 1 + 任务间 3s」，只是把结果用 [CompletableDeferred] 带回调用方。
+     */
+    suspend fun <T> submit(name: String, block: suspend () -> T): T {
+        start()
+        val deferred = CompletableDeferred<Result<T>>()
+        channel.send(
+            QueueTask(name = name) {
+                if (!deferred.isCompleted) deferred.complete(runCatching { block() })
+            },
+        )
+        return deferred.await().getOrThrow()
+    }
+
+    /**
      * 自检：入队 5 个模拟任务（每个 delay(500)），等全部跑完后返回。
      * 预期日志：任务 N 开始 → 500ms → 任务 N 结束 → 3000ms → 任务 N+1 开始 …
      */

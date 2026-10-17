@@ -35,6 +35,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.zIndex
 import dev.chrisbanes.haze.ExperimentalHazeApi
 import dev.chrisbanes.haze.HazeInput
@@ -42,7 +43,9 @@ import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.glass.GlassStyle
 import dev.chrisbanes.haze.glass.hazeGlass
 import dev.chrisbanes.haze.hazeSource
+import coil.compose.AsyncImage
 import dev.chrisbanes.haze.rememberHazeState
+import java.io.File
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 16:9 叙事舞台（第三期：删掉全部假数据，文本一律由调用方传入）
@@ -70,6 +73,7 @@ fun StageScreen(
     text: String = "",
     chapterLabel: String = "第1章 正文 · 场景地点",
     onBack: (() -> Unit)? = null,
+    backgroundImagePath: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val hazeState = rememberHazeState()
@@ -89,13 +93,27 @@ fun StageScreen(
                     .clip(RoundedCornerShape(12.dp))
                     .background(StageBlack),
             ) {
-                // ① 背景占位（Haze 取景源）
+                // ① 背景：AI 生图优先，否则深灰占位（Haze 取景源）
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .hazeSource(hazeState)
-                        .background(Brush.verticalGradient(listOf(BackdropTop, BackdropBottom))),
-                )
+                        .hazeSource(hazeState),
+                ) {
+                    if (backgroundImagePath != null) {
+                        AsyncImage(
+                            model = File(backgroundImagePath),
+                            contentDescription = "AI 生成的场景",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Brush.verticalGradient(listOf(BackdropTop, BackdropBottom))),
+                        )
+                    }
+                }
 
                 // ② 立绘占位：左侧固定 120dp 宽，高 80%，底部对齐
                 Box(
