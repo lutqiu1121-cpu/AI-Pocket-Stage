@@ -4,7 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
 
-/** 阅读器可调参数（全部持久化到 SharedPreferences）。 */
+/** 阅读器可调参数（排版类，持久化到 SharedPreferences）。主题由 [ThemeRepository] 用 DataStore 单独管理。 */
 data class ReaderSettings(
     val fontSize: Float = 18f,
     val letterSpacing: Float = 0.2f,
@@ -16,24 +16,22 @@ data class ReaderSettings(
     val indentEnabled: Boolean = true,
     /** 左右边距，单位 dp。 */
     val marginDp: Int = 24,
-    /** 0 白 / 1 米黄 / 2 护眼绿 / 3 深灰 / 4 纯黑。 */
-    val theme: Int = 0,
     /** 翻页动画：0 覆盖 / 1 滑动 / 2 仿真 / 3 滚动 / 4 无动画。 */
     val pageAnimation: Int = 3,
     val aiEnabled: Boolean = true,
 )
 
-/** 阅读器主题配色。 */
-enum class ReaderTheme(
-    val label: String,
-    val background: Long,
-    val ink: Long,
-) {
-    PAPER("白", 0xFFFFFFFF, 0xFF1F2024),
-    SEPIA("米黄", 0xFFF5EFE6, 0xFF3A3226),
-    EYE_GREEN("护眼绿", 0xFFE8F3E8, 0xFF2A3A2A),
-    DARK_GRAY("深灰", 0xFF2B2B2B, 0xFFD9D9D9),
-    PURE_BLACK("纯黑", 0xFF000000, 0xFFBFBFBF),
+/**
+ * 阅读器独立主题（与全局 App 主题彻底隔离）。
+ *
+ * 颜色本身不允许硬编码在枚举里：具体配色见 `ui/theme/Color.kt` 的 `readerScheme`。
+ */
+enum class ReaderTheme(val label: String) {
+    PAPER("白"),
+    SEPIA("米黄"),
+    EYE_GREEN("护眼绿"),
+    DARK_GRAY("深灰"),
+    PURE_BLACK("纯黑"),
 }
 
 object ReaderPrefs {
@@ -53,7 +51,6 @@ object ReaderPrefs {
             fontWeight = p.getInt("font_weight", 1),
             indentEnabled = p.getBoolean("indent", true),
             marginDp = p.getInt("margin", 24),
-            theme = p.getInt("theme", 0),
             pageAnimation = p.getInt("page_animation", 3),
             aiEnabled = p.getBoolean("ai_enabled", true),
         )
@@ -68,7 +65,6 @@ object ReaderPrefs {
             putInt("font_weight", settings.fontWeight)
             putBoolean("indent", settings.indentEnabled)
             putInt("margin", settings.marginDp)
-            putInt("theme", settings.theme)
             putInt("page_animation", settings.pageAnimation)
             putBoolean("ai_enabled", settings.aiEnabled)
         }

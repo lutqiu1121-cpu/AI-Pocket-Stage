@@ -1,5 +1,7 @@
 package com.lutqiu.lumiread.services
 
+import com.lutqiu.lumiread.data.ApiConfig
+
 import android.content.Context
 
 /**

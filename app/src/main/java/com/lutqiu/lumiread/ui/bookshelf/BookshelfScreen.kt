@@ -9,12 +9,14 @@ import com.lutqiu.lumiread.BuildConfig
 import java.io.File
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,16 +24,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import com.lutqiu.lumiread.ui.components.PageHeader
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -44,8 +43,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -55,16 +52,11 @@ import com.lutqiu.lumiread.data.BookFormat
 import com.lutqiu.lumiread.data.BookStore
 import com.lutqiu.lumiread.data.ReadingMode
 import com.lutqiu.lumiread.services.ParserService
+import com.lutqiu.lumiread.ui.components.PageHeader
+import com.lutqiu.lumiread.ui.theme.LumiColors
 import kotlinx.coroutines.launch
 
 private const val TAG = "BookshelfScreen"
-
-private val CanvasGray = Color(0xFFF7F8FA)
-private val Ink = Color(0xFF1A1B1E)
-private val SubInk = Color(0xFF6B7078)
-private val Accent = Color(0xFF3B82F6)
-private val DeepBlue = Color(0xFF1E3A8A)
-private val DeepBlueBorder = Color(0xFFBFD3FF)
 
 /** SAF 里只用这两种 MIME 过滤：纯文本 + EPUB。 */
 private val PICKER_MIME = arrayOf("text/plain", "application/epub+zip")
@@ -74,8 +66,9 @@ fun BookshelfScreen(
     onOpenBook: (Book, ReadingMode) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val context = LocalContext.current
+    val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
+    val scheme = MaterialTheme.colorScheme
 
     var books by remember { mutableStateOf<List<Book>>(emptyList()) }
     // 每本书进入方式（文本阅读 / 剧场 VN）；默认普通阅读
@@ -83,7 +76,7 @@ fun BookshelfScreen(
     var importing by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
 
-    // 恢复上次导入的书架；旧解析器切出来的 EPUB 自动按新逻辑重解析（修复历史缓存里的目录页/乱码）
+    // 恢复上次导入的书架；旧解析器切出来的书自动按新逻辑重解析
     LaunchedEffect(Unit) {
         var loaded = BookStore.load(context)
 
@@ -157,7 +150,7 @@ fun BookshelfScreen(
         books = updated
         BookStore.save(context, updated)
         importing = false
-        message = "已按新解析器重新切分 ${stale.size} 本 EPUB"
+        message = "已按新解析器重新切分 ${stale.size} 本书"
     }
 
     val picker = rememberLauncherForActivityResult(
@@ -186,41 +179,40 @@ fun BookshelfScreen(
         }
     }
 
-    MaterialTheme {
-        Column(
-            modifier = modifier
-                .fillMaxSize()
-                .background(CanvasGray),
-        ) {
-            // 统一 PageHeader：24dp 边距 / 28sp 加粗，右侧放导入按钮
-            PageHeader(
-                title = "书架",
-                action = {
-                    ImportButton(
-                        importing = importing,
-                        onClick = {
-                            runCatching { picker.launch(PICKER_MIME) }
-                                .onFailure { message = "无法打开文件选择器：${it.message}" }
-                        },
-                    )
-                },
-            )
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(scheme.background),
+    ) {
+        // 统一 PageHeader：24dp 边距 / 28sp 加粗，右侧放导入按钮
+        PageHeader(
+            title = "书架",
+            action = {
+                ImportButton(
+                    importing = importing,
+                    onClick = {
+                        runCatching { picker.launch(PICKER_MIME) }
+                            .onFailure { message = "无法打开文件选择器：${it.message}" }
+                    },
+                )
+            },
+        )
 
-            if (books.isNotEmpty() || importing) {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp),
-                ) {
-                    items(items = books, key = { it.id }) { book ->
-                        val mode = modes[book.id] ?: ReadingMode.READER
-                        BookRow(
-                            book = book,
-                            mode = mode,
-                            onSelectMode = { modes[book.id] = it },
-                            onClick = { onOpenBook(book, mode) },
-                        )
-                    }
+        if (books.isNotEmpty() || importing) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                // 底部留出液态玻璃导航栏的高度，内容可从玻璃后方滑过
+                contentPadding = PaddingValues(top = 4.dp, bottom = 120.dp),
+            ) {
+                items(items = books, key = { it.id }) { book ->
+                    val mode = modes[book.id] ?: ReadingMode.READER
+                    BookRow(
+                        book = book,
+                        mode = mode,
+                        onSelectMode = { modes[book.id] = it },
+                        onClick = { onOpenBook(book, mode) },
+                    )
                 }
             }
         }
@@ -229,10 +221,11 @@ fun BookshelfScreen(
 
 @Composable
 private fun ImportButton(importing: Boolean, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(50))
-            .background(Accent)
+            .background(scheme.primary)
             .clickable(enabled = !importing, onClick = onClick)
             .padding(horizontal = 18.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -241,13 +234,13 @@ private fun ImportButton(importing: Boolean, onClick: () -> Unit) {
             CircularProgressIndicator(
                 modifier = Modifier.size(14.dp),
                 strokeWidth = 2.dp,
-                color = Color.White,
+                color = scheme.onPrimary,
             )
             Spacer(Modifier.width(8.dp))
         }
         Text(
             text = if (importing) "解析中…" else "导入书籍",
-            style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color.White),
+            style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium, color = scheme.onPrimary),
         )
     }
 }
@@ -259,9 +252,11 @@ private fun BookRow(
     onSelectMode: (ReadingMode) -> Unit,
     onClick: () -> Unit,
 ) {
+    val scheme = MaterialTheme.colorScheme
     Surface(
         shape = RoundedCornerShape(14.dp),
-        color = Color.White,
+        color = scheme.surface,
+        border = BorderStroke(1.dp, scheme.outlineVariant),
         shadowElevation = 1.dp,
         modifier = Modifier
             .fillMaxWidth()
@@ -276,12 +271,12 @@ private fun BookRow(
                 modifier = Modifier
                     .size(width = 44.dp, height = 58.dp)
                     .clip(RoundedCornerShape(6.dp))
-                    .background(Accent.copy(alpha = 0.12f)),
+                    .background(scheme.primary.copy(alpha = 0.12f)),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = if (book.format == BookFormat.EPUB) "EPUB" else "TXT",
-                    style = TextStyle(fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Accent),
+                    style = TextStyle(fontSize = 9.sp, fontWeight = FontWeight.Bold, color = scheme.primary),
                 )
             }
 
@@ -290,13 +285,13 @@ private fun BookRow(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = book.title,
-                    style = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Ink),
+                    style = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = scheme.onSurface),
                     maxLines = 1,
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
                     text = "${book.format.name} · ${book.chapters.size} 章",
-                    style = TextStyle(fontSize = 11.sp, color = SubInk),
+                    style = TextStyle(fontSize = 11.sp, color = scheme.onSurfaceVariant),
                 )
             }
 
@@ -306,7 +301,7 @@ private fun BookRow(
 
             Text(
                 text = "›",
-                style = TextStyle(fontSize = 20.sp, color = SubInk),
+                style = TextStyle(fontSize = 20.sp, color = scheme.onSurfaceVariant),
             )
         }
     }
@@ -314,15 +309,16 @@ private fun BookRow(
 
 /**
  * 「文本 / 剧场」切换 Chip（v0.4.0）：
- * 选中态 = 深蓝底 + 白字 + 浅蓝外边框，极其明显；未选中为透明底灰字。
+ * 选中态 = 深蓝底 + 白字 + 亮蓝外边框，极其显眼；未选中为透明底灰字。
  */
 @Composable
 private fun ModeChip(mode: ReadingMode, onSelect: (ReadingMode) -> Unit) {
+    val scheme = MaterialTheme.colorScheme
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(50))
-            .background(Color(0xFFF3F4F6))
-            .border(1.dp, Color(0xFFE2E5EA), RoundedCornerShape(50))
+            .background(scheme.surfaceVariant)
+            .border(1.dp, scheme.outline, RoundedCornerShape(50))
             .padding(2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -336,10 +332,10 @@ private fun ModeSegment(label: String, selected: Boolean, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(50))
-            .background(if (selected) DeepBlue else Color.Transparent)
+            .background(if (selected) LumiColors.BlueDeep else LumiColors.Transparent)
             .then(
                 if (selected) {
-                    Modifier.border(2.dp, DeepBlueBorder, RoundedCornerShape(50))
+                    Modifier.border(2.dp, LumiColors.BlueSoft, RoundedCornerShape(50))
                 } else {
                     Modifier
                 },
@@ -352,7 +348,7 @@ private fun ModeSegment(label: String, selected: Boolean, onClick: () -> Unit) {
             style = TextStyle(
                 fontSize = 10.sp,
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                color = if (selected) Color.White else Color(0xFF8A9099),
+                color = if (selected) LumiColors.White else MaterialTheme.colorScheme.onSurfaceVariant,
             ),
         )
     }

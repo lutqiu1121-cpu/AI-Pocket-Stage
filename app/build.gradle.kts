@@ -70,6 +70,7 @@ dependencies {
     // 毛玻璃（底座自带 Haze 2.0.0）
     implementation(libs.haze)
     implementation(libs.haze.glass)
+    implementation(libs.androidx.datastore.preferences)
 
     // 第三期：文件解析 / 网络队列 / 图片加载 / 本地序列化
     implementation(libs.epublib.core) {

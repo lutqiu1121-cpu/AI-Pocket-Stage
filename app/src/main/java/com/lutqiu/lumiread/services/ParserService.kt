@@ -22,13 +22,25 @@ object ParserService {
     private const val TAG = "ParserService"
 
     /** 解析器版本：改动切章逻辑时 +1，书架会据此自动重解析旧缓存。 */
-    const val PARSER_VERSION = 6
+    const val PARSER_VERSION = 7
 
-    /** 章节标题正则（TXT 与 EPUB 兜底共用）：第 + 数字/中文数字 + 章|节|回。 */
-    private val CHAPTER_HEADING = Regex("""第[0-9一二三四五六七八九十百千万]+[章|节|回]""")
+    /**
+     * 复合章节标题（Legado 风格）：
+     * 行首最多 5 个空白 + 标题关键词 + 行尾最多 30 字。
+     * 关键词覆盖：第 X 章节回卷 / 楔子 / 序章 / 前言 / 尾声 / 番外 / 后记。
+     */
+    private val CHAPTER_HEADING = Regex(
+        """(?m)^[ \t]{0,5}(第[0-9一二三四五六七八九十百千万]+[章|节|回卷]|楔子|序章|前言|尾声|番外|后记)[^\n]{0,30}$""",
+    )
 
     /** 行首章节标题（多行模式）：把单个巨大 XHTML 二次切章用。 */
-    private val HEADING_LINE = Regex("""(?m)^第[0-9一二三四五六七八九十百千万]+[章|节|回].*""")
+    private val HEADING_LINE = Regex("""(?m)^第[0-9一二三四五六七八九十百千万]+[章|节|回卷].*""")
+
+    /** Ghost chapter 阈值：正文短于该字符数（只有几句话）视为正文误判。 */
+    private const val GHOST_MIN_CHARS = 60
+
+    /** 标题最大长度：超过说明是把正文句子误判成标题。 */
+    private const val TITLE_MAX_CHARS = 30
 
     /** 目录 / 导航 / 封面页的文件名特征 —— 这些是书的结构元数据，绝不能当正文。 */
     private val SKIP_PATH_KEYWORDS = listOf("toc", "nav", "cover")
@@ -139,19 +151,19 @@ object ParserService {
             .joinToString("\n\n") { chunk -> chunk.joinToString("") }
     }
 
-    /** 按章节正则切分纯文本；没有命中任何标题时整篇作为一章返回。 */
+    /** 按复合标题正则切分纯文本；没有命中任何标题时整篇作为一章返回。 */
     internal fun splitTxt(text: String): List<Chapter> {
         if (text.isBlank()) return emptyList()
 
         val marks = CHAPTER_HEADING.findAll(text).toList()
         if (marks.isEmpty()) {
-            return listOf(Chapter(index = 0, title = "正文", content = text.trim()))
+            return listOf(Chapter(index = 0, title = "正文", content = normalizeParagraphs(text)))
         }
 
-        val chapters = mutableListOf<Chapter>()
+        val raw = mutableListOf<Chapter>()
         val preface = text.substring(0, marks.first().range.first).trim()
         if (preface.isNotEmpty()) {
-            chapters += Chapter(index = 0, title = "前言", content = preface)
+            raw += Chapter(index = 0, title = "前言", content = normalizeParagraphs(preface))
         }
 
         marks.forEachIndexed { i, mark ->
@@ -162,36 +174,66 @@ object ParserService {
             val heading = body.lineSequence().firstOrNull().orEmpty().trim().take(48)
             // 标题只进 title，正文从标题下一行开始
             val rest = body.removePrefix(body.lineSequence().first()).trimStart()
-            chapters += Chapter(
-                index = chapters.size,
+            raw += Chapter(
+                index = raw.size,
                 title = heading.ifBlank { "第${i + 1}章" },
-                content = rest.ifBlank { body },
+                content = normalizeParagraphs(rest.ifBlank { body }),
             )
         }
-        return chapters
+        return mergeGhostChapters(raw)
     }
+
+    /**
+     * Ghost-chapter 过滤（参考 Legado）：
+     * 正文过短（只有几句话）或标题异常长的「章节」，判定为正文被标题正则误伤，
+     * 强行合并到上一章；合并后再统一做 `\n\n` 段落重整。
+     */
+    internal fun mergeGhostChapters(chapters: List<Chapter>): List<Chapter> {
+        val out = mutableListOf<Chapter>()
+        chapters.forEach { chapter ->
+            val ghost = chapter.content.trim().length < GHOST_MIN_CHARS ||
+                chapter.title.trim().length > TITLE_MAX_CHARS
+            if (ghost && out.isNotEmpty()) {
+                val prev = out.removeAt(out.lastIndex)
+                out += prev.copy(content = joinParagraphs(prev.content, chapter.content))
+            } else {
+                out += chapter.copy(content = normalizeParagraphs(chapter.content))
+            }
+        }
+        return out.mapIndexed { index, chapter -> chapter.copy(index = index) }
+    }
+
+    private fun joinParagraphs(a: String, b: String): String =
+        normalizeParagraphs(listOf(a, b).filter { it.isNotBlank() }.joinToString("\n\n"))
+
+    /** 出口保证：任意换行都归一为段落分隔 `\n\n`，绝不粘连。 */
+    private fun normalizeParagraphs(text: String): String = text
+        .replace("\r\n", "\n")
+        .replace('\r', '\n')
+        .split(Regex("\\n+"))
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .joinToString("\n\n")
 
     // ── EPUB ───────────────────────────────────────────────────────────────
 
     /**
-     * EPUB 解析（v0.2.4 重构）：
+     * EPUB 解析（v0.4.0 重写）：
      *
-     * 1. **目录页 / 封面页过滤**：href 里含 `toc` / `nav` / `cover` 的文档一律跳过 ——
-     *    旧实现把 `nav.xhtml` 当正文，读者第一页看到的就是整本书的目录；
-     * 2. **优先用 OPF 的真实目录**（`epub.tableOfContents.tocReferences`）：用目录项指向的
-     *    资源出章，标题用目录名；同一 xhtml 被多个锚点引用时去重；
-     * 3. **兜底**：没有 TOC，或整本书只有一个巨大 XHTML 时，用行首章节号正则
-     *    `(?m)^第[0-9一二三四五六七八九十百千万]+[章|节|回].*` 对清洗后的正文二次切章。
-     *
-     * 每个文档清洗后仍会再走一次 [splitByHeading]，保证「一章一个巨文件」的书也能拆开。
+     * 1. 解析 OPF（epublib 读取）后优先取目录结构：epublib 的 `tableOfContents` 来自
+     *    `toc.ncx` 或 `nav.xhtml`；为空时再直接解析这两类文件原文兜底；
+     * 2. **TOC 与 Spine 交叉验证**：用目录 href 去匹配 spine 文件出章；
+     * 3. 没有出现在目录中的 spine 碎片文件 **不允许独立成章**，直接 append 到上一章末尾；
+     * 4. 目录页 / 导航页 / 封面页（toc / nav / cover）永远跳过；
+     * 5. 每个文档内部若还有多个「第X章」标题，再走一次 [splitByHeading]。
      */
     suspend fun parseEpub(context: Context, uri: Uri): List<Chapter> = withContext(Dispatchers.IO) {
         val epub = readEpub(context, uri) ?: return@withContext emptyList()
 
-        val fromToc = chaptersFromToc(epub)
-        val base = fromToc.ifEmpty { chaptersFromSpine(epub) }
+        val toc = tocEntries(epub)
+        val spine = spineDocs(epub)
+        val base = assembleEpubChapters(toc, spine)
 
-        // 每个文档内部若还有多个「第X章」标题 → 二次切分
         base.flatMap { chapter -> splitByHeading(chapter.content, chapter.title) }
             .filter { it.content.isNotBlank() }
             .mapIndexed { index, chapter -> chapter.copy(index = index) }
@@ -204,51 +246,148 @@ object ParserService {
         return SKIP_PATH_KEYWORDS.any { path.contains(it) }
     }
 
-    /** 从 OPF 目录建章（递归子目录，最多 4 层防环；同 href 只取第一次）。 */
-    private fun chaptersFromToc(epub: EpubBook): List<Chapter> {
-        val roots = runCatching { epub.tableOfContents?.tocReferences }.getOrNull().orEmpty()
-        if (roots.isEmpty()) return emptyList()
+    /** 目录项（href 已归一化为小写、去锚点）。 */
+    internal data class TocEntry(val href: String, val title: String)
 
-        val chapters = mutableListOf<Chapter>()
+    /** spine 里的一个已清洗文档。 */
+    internal data class SpineDoc(val href: String, val title: String, val content: String)
+
+    /**
+     * TOC × Spine 交叉验证（纯函数，可单测）。
+     *
+     * - toc 为空：退化为按 spine 顺序出章（无目录书籍）；
+     * - toc 非空：目录命中的出章；没命中的碎片并入上一章末尾。
+     */
+    internal fun assembleEpubChapters(toc: List<TocEntry>, spine: List<SpineDoc>): List<Chapter> {
+        val cleanSpine = spine.filter { it.content.isNotBlank() && !shouldSkipHref(it.href) }
+        if (cleanSpine.isEmpty()) return emptyList()
+
+        if (toc.isEmpty()) {
+            return cleanSpine.mapIndexed { index, doc ->
+                Chapter(
+                    index = index,
+                    title = doc.title.ifBlank { "第${index + 1}章" },
+                    content = normalizeParagraphs(doc.content),
+                )
+            }
+        }
+
+        val byHref = cleanSpine.associateBy { normalizeHref(it.href) }
+        val used = mutableSetOf<String>()
+        val out = mutableListOf<Chapter>()
+
+        toc.forEach { entry ->
+            if (shouldSkipHref(entry.href)) return@forEach
+            val key = normalizeHref(entry.href)
+            val doc = byHref[key] ?: return@forEach
+            if (!used.add(key)) return@forEach
+            out += Chapter(
+                index = out.size,
+                title = entry.title.ifBlank { doc.title }.ifBlank { "第${out.size + 1}章" },
+                content = doc.content,
+            )
+        }
+
+        // 目录里没有的 spine 碎片：不独立成章，append 到上一章末尾
+        cleanSpine.forEach { doc ->
+            val key = normalizeHref(doc.href)
+            if (!used.add(key)) return@forEach
+            if (out.isEmpty()) {
+                out += Chapter(index = 0, title = doc.title.ifBlank { "正文" }, content = doc.content)
+            } else {
+                val last = out.removeAt(out.lastIndex)
+                out += last.copy(
+                    content = listOf(last.content, doc.content)
+                        .filter { it.isNotBlank() }
+                        .joinToString("\n\n"),
+                )
+            }
+        }
+
+        return out.mapIndexed { index, chapter ->
+            chapter.copy(index = index, content = normalizeParagraphs(chapter.content))
+        }
+    }
+
+    private fun normalizeHref(href: String): String =
+        href.substringBefore('#').trim().lowercase()
+
+    /** 目录来源：优先 epublib 解析好的 TOC，为空时回退解析 toc.ncx / nav.xhtml 原文。 */
+    private fun tocEntries(epub: EpubBook): List<TocEntry> {
+        val out = mutableListOf<TocEntry>()
         val seen = mutableSetOf<String>()
 
         fun visit(refs: List<TOCReference>, depth: Int) {
             refs.forEach { ref ->
-                val resource = ref.resource
-                val href = resource?.href ?: ref.completeHref
-                if (resource != null && href != null && !shouldSkipHref(href)) {
-                    // 同一 xhtml 被多个锚点引用（#ch1 / #ch2）只取一次，剩下的交给标题正则切
-                    val key = href.substringBefore('#')
-                    if (seen.add(key)) {
-                        val rawHtml = resource.data?.toString(Charsets.UTF_8).orEmpty()
-                        val parsed = parseXhtml(rawHtml, ref.title?.trim().orEmpty())
-                        if (parsed != null) {
-                            chapters += Chapter(
-                                index = chapters.size,
-                                title = parsed.title.ifBlank { "第${chapters.size + 1}章" },
-                                content = parsed.content,
-                            )
-                        }
+                val href = ref.resource?.href ?: ref.completeHref
+                if (!href.isNullOrBlank()) {
+                    val key = normalizeHref(href)
+                    if (key.isNotBlank() && seen.add(key)) {
+                        out += TocEntry(href = key, title = ref.title?.trim().orEmpty())
                     }
                 }
                 if (depth < 3) visit(ref.children.orEmpty(), depth + 1)
             }
         }
 
-        visit(roots, 0)
-        return chapters
+        runCatching { visit(epub.tableOfContents?.tocReferences.orEmpty(), 0) }
+        if (out.isNotEmpty()) return out
+
+        runCatching {
+            epub.resources?.getAll()?.forEach { res ->
+                val href = res.href.orEmpty()
+                val raw = runCatching { res.data?.toString(Charsets.UTF_8).orEmpty() }.getOrDefault("")
+                when {
+                    href.endsWith(".ncx", ignoreCase = true) -> out += parseNcxToc(raw)
+                    href.endsWith(".xhtml", ignoreCase = true) && href.contains("nav", ignoreCase = true) ->
+                        out += parseNavToc(raw)
+                }
+            }
+        }
+        return out.distinctBy { it.href }
     }
 
-    /** 没有目录时：按 spine 顺序出章，跳过 toc/nav/cover。 */
-    private fun chaptersFromSpine(epub: EpubBook): List<Chapter> = buildList {
+    /** 解析 NCX 原文（纯正则，可单测）。 */
+    internal fun parseNcxToc(raw: String): List<TocEntry> {
+        if (raw.isBlank()) return emptyList()
+        val navPoint = Regex(
+            """(?is)<navPoint\b.*?<text>(.*?)</text>.*?<content[^>]*\bsrc=["']([^"']+)["']""",
+        )
+        return navPoint.findAll(raw)
+            .mapNotNull { match ->
+                val href = normalizeHref(match.groupValues[2])
+                if (href.isBlank()) null else TocEntry(href, stripTags(match.groupValues[1]))
+            }
+            .distinctBy { it.href }
+            .toList()
+    }
+
+    /** 解析 EPUB3 nav.xhtml 原文（纯正则，可单测）。 */
+    internal fun parseNavToc(raw: String): List<TocEntry> {
+        if (raw.isBlank()) return emptyList()
+        val anchor = Regex("""(?is)<a\b[^>]*\bhref=["']([^"']+)["'][^>]*>(.*?)</a>""")
+        return anchor.findAll(raw)
+            .mapNotNull { match ->
+                val href = normalizeHref(match.groupValues[1])
+                if (href.isBlank() || href.startsWith("http")) null
+                else TocEntry(href, stripTags(match.groupValues[2]))
+            }
+            .distinctBy { it.href }
+            .toList()
+    }
+
+    private fun stripTags(html: String): String =
+        html.replace(ANY_TAG, " ").replace(Regex("\\s+"), " ").trim()
+
+    /** 按 spine 顺序清洗出文档（跳过 toc / nav / cover）。 */
+    private fun spineDocs(epub: EpubBook): List<SpineDoc> = buildList {
         epub.spine.spineReferences.forEach { reference ->
             val resource = reference.resource ?: return@forEach
-            if (shouldSkipHref(resource.href)) return@forEach
+            val href = resource.href ?: return@forEach
+            if (shouldSkipHref(href)) return@forEach
             val rawHtml = resource.data?.toString(Charsets.UTF_8).orEmpty()
-            val parsed = parseXhtml(rawHtml, resource.title.orEmpty())
-            if (parsed != null) {
-                add(Chapter(index = size, title = parsed.title.ifBlank { "第${size + 1}章" }, content = parsed.content))
-            }
+            val parsed = parseXhtml(rawHtml, resource.title.orEmpty()) ?: return@forEach
+            add(SpineDoc(href = href, title = parsed.title, content = parsed.content))
         }
     }
 

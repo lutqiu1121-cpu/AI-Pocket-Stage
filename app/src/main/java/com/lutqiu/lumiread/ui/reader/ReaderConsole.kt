@@ -25,9 +25,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
@@ -42,31 +42,28 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.chrisbanes.haze.HazeState
 import kotlin.math.roundToInt
 import com.lutqiu.lumiread.data.Chapter
 import com.lutqiu.lumiread.data.ReaderSettings
 import com.lutqiu.lumiread.data.ReaderTheme
-import com.lutqiu.lumiread.services.ApiConfig
+import com.lutqiu.lumiread.data.ApiConfig
+import com.lutqiu.lumiread.ui.components.LiquidGlassPanel
+import com.lutqiu.lumiread.ui.theme.LumiColors
+import com.lutqiu.lumiread.ui.theme.readerScheme
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 沉浸式控制台（黑色面板）
+// 沉浸式控制台（液态玻璃）
 //   Home      ：进度条（上一章 / 下一章）+ 目录 / 界面 / 设置
 //   目录      ：章节列表
-//   界面      ：字重 / 缩进 / 边距 + 四个滑块 + 翻页动画 + 主题
-//   设置      ：AI 开关 + 智谱 Key
+//   界面      ：字重 / 缩进 / 边距 + 四个滑块 + 阅读器主题
+//   设置      ：AI 开关（Key 已在 ApiConfig.kt 内置）
 // ─────────────────────────────────────────────────────────────────────────────
-
-val ConsoleBg = Color(0xFFFFFFFF)
-val ConsoleSurface = Color(0xFFF2F3F5)
-val ConsoleInk = Color(0xFF1A1B1E)
-val ConsoleSubInk = Color(0xFF6B7078)
-val ConsoleAccent = Color(0xFF3B82F6)
 
 private const val PAGE_HOME = 0
 private const val PAGE_TOC = 1
@@ -78,15 +75,17 @@ fun ReaderConsole(
     chapters: List<Chapter>,
     currentChapter: Int,
     settings: ReaderSettings,
+    readerTheme: ReaderTheme,
     onSettingsChange: (ReaderSettings) -> Unit,
+    onReaderThemeChange: (ReaderTheme) -> Unit,
     onJumpChapter: (Int) -> Unit,
 ) {
     var page by remember { mutableIntStateOf(PAGE_HOME) }
+    val scheme = MaterialTheme.colorScheme
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(ConsoleBg)
             .padding(top = 14.dp, bottom = 10.dp),
     ) {
         if (page != PAGE_HOME) {
@@ -100,7 +99,7 @@ fun ReaderConsole(
                         .clip(RoundedCornerShape(50))
                         .clickable { page = PAGE_HOME }
                         .padding(horizontal = 10.dp, vertical = 6.dp),
-                    style = TextStyle(color = ConsoleSubInk, fontSize = 13.sp),
+                    style = TextStyle(color = scheme.onSurfaceVariant, fontSize = 13.sp),
                 )
                 Spacer(Modifier.width(6.dp))
                 Text(
@@ -109,7 +108,11 @@ fun ReaderConsole(
                         PAGE_INTERFACE -> "界面"
                         else -> "设置"
                     },
-                    style = TextStyle(color = ConsoleInk, fontSize = 14.sp, fontWeight = FontWeight.Medium),
+                    style = TextStyle(
+                        color = scheme.onSurface,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                    ),
                 )
             }
         }
@@ -133,7 +136,12 @@ fun ReaderConsole(
                 },
             )
 
-            PAGE_INTERFACE -> ConsoleInterface(settings = settings, onSettingsChange = onSettingsChange)
+            PAGE_INTERFACE -> ConsoleInterface(
+                settings = settings,
+                readerTheme = readerTheme,
+                onSettingsChange = onSettingsChange,
+                onReaderThemeChange = onReaderThemeChange,
+            )
 
             PAGE_SETTINGS -> ConsoleSettings(settings = settings, onSettingsChange = onSettingsChange)
         }
@@ -151,6 +159,7 @@ private fun ConsoleHome(
     onJumpChapter: (Int) -> Unit,
     onOpen: (Int) -> Unit,
 ) {
+    val scheme = MaterialTheme.colorScheme
     val progress = if (totalChapters <= 1) 1f else (currentChapter + 1).toFloat() / totalChapters
 
     Column(Modifier.padding(horizontal = 20.dp)) {
@@ -168,10 +177,9 @@ private fun ConsoleHome(
                     .clickable(enabled = currentChapter > 0, onClick = onPrev)
                     .alpha(if (currentChapter > 0) 1f else 0.35f)
                     .padding(horizontal = 10.dp, vertical = 6.dp),
-                style = TextStyle(color = ConsoleSubInk, fontSize = 12.sp),
+                style = TextStyle(color = scheme.onSurfaceVariant, fontSize = 12.sp),
             )
             if (totalChapters > 1) {
-                // 可拖拽进度条：松手后按比例跳章（onValueChangeFinished）
                 Slider(
                     value = draft.coerceIn(0f, (totalChapters - 1).toFloat()),
                     onValueChange = { draft = it },
@@ -179,17 +187,17 @@ private fun ConsoleHome(
                     valueRange = 0f..(totalChapters - 1).toFloat(),
                     modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
                     colors = SliderDefaults.colors(
-                        thumbColor = ConsoleAccent,
-                        activeTrackColor = ConsoleAccent,
-                        inactiveTrackColor = ConsoleSubInk.copy(alpha = 0.25f),
+                        thumbColor = scheme.primary,
+                        activeTrackColor = scheme.primary,
+                        inactiveTrackColor = scheme.onSurfaceVariant.copy(alpha = 0.24f),
                     ),
                 )
             } else {
                 LinearProgressIndicator(
                     progress = { progress },
                     modifier = Modifier.weight(1f).height(4.dp).padding(horizontal = 10.dp).clip(CircleShape),
-                    color = ConsoleAccent,
-                    trackColor = ConsoleSubInk.copy(alpha = 0.25f),
+                    color = scheme.primary,
+                    trackColor = scheme.onSurfaceVariant.copy(alpha = 0.24f),
                 )
             }
             Text(
@@ -199,7 +207,7 @@ private fun ConsoleHome(
                     .clickable(enabled = currentChapter < totalChapters - 1, onClick = onNext)
                     .alpha(if (currentChapter < totalChapters - 1) 1f else 0.35f)
                     .padding(horizontal = 10.dp, vertical = 6.dp),
-                style = TextStyle(color = ConsoleSubInk, fontSize = 12.sp),
+                style = TextStyle(color = scheme.onSurfaceVariant, fontSize = 12.sp),
             )
         }
 
@@ -219,6 +227,7 @@ private fun ConsoleHome(
 
 @Composable
 private fun ConsoleAction(glyph: String, label: String, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
@@ -226,9 +235,9 @@ private fun ConsoleAction(glyph: String, label: String, onClick: () -> Unit) {
             .clickable(onClick = onClick)
             .padding(horizontal = 18.dp, vertical = 8.dp),
     ) {
-        Text(text = glyph, style = TextStyle(color = ConsoleInk, fontSize = 20.sp))
+        Text(text = glyph, style = TextStyle(color = scheme.onSurface, fontSize = 20.sp))
         Spacer(Modifier.height(6.dp))
-        Text(text = label, style = TextStyle(color = ConsoleSubInk, fontSize = 12.sp))
+        Text(text = label, style = TextStyle(color = scheme.onSurfaceVariant, fontSize = 12.sp))
     }
 }
 
@@ -240,10 +249,11 @@ private fun ConsoleToc(
     currentChapter: Int,
     onSelect: (Int) -> Unit,
 ) {
+    val scheme = MaterialTheme.colorScheme
     Column(Modifier.padding(horizontal = 16.dp)) {
         Text(
             text = "共 ${chapters.size} 章",
-            style = TextStyle(color = ConsoleSubInk, fontSize = 12.sp),
+            style = TextStyle(color = scheme.onSurfaceVariant, fontSize = 12.sp),
             modifier = Modifier.padding(vertical = 8.dp),
         )
         LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp)) {
@@ -254,13 +264,16 @@ private fun ConsoleToc(
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(10.dp))
                         .clickable { onSelect(index) }
-                        .background(if (current) ConsoleAccent.copy(alpha = 0.16f) else Color.Transparent)
+                        .background(if (current) scheme.primary.copy(alpha = 0.16f) else LumiColors.Transparent)
                         .padding(horizontal = 12.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
                         text = (index + 1).toString(),
-                        style = TextStyle(fontSize = 11.sp, color = if (current) ConsoleAccent else ConsoleSubInk),
+                        style = TextStyle(
+                            fontSize = 11.sp,
+                            color = if (current) scheme.primary else scheme.onSurfaceVariant,
+                        ),
                         modifier = Modifier.width(32.dp),
                     )
                     Text(
@@ -268,7 +281,7 @@ private fun ConsoleToc(
                         style = TextStyle(
                             fontSize = 14.sp,
                             fontWeight = if (current) FontWeight.SemiBold else FontWeight.Normal,
-                            color = if (current) ConsoleAccent else ConsoleInk,
+                            color = if (current) scheme.primary else scheme.onSurface,
                         ),
                         maxLines = 1,
                     )
@@ -284,8 +297,11 @@ private fun ConsoleToc(
 @Composable
 private fun ConsoleInterface(
     settings: ReaderSettings,
+    readerTheme: ReaderTheme,
     onSettingsChange: (ReaderSettings) -> Unit,
+    onReaderThemeChange: (ReaderTheme) -> Unit,
 ) {
+    val scheme = MaterialTheme.colorScheme
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -293,7 +309,6 @@ private fun ConsoleInterface(
     ) {
         Spacer(Modifier.height(8.dp))
 
-        // 顶部快捷：字重 / 缩进 / 边距
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             ConsoleChip(
                 label = "字重 ${fontWeightLabel(settings.fontWeight)}",
@@ -358,7 +373,7 @@ private fun ConsoleInterface(
 
         Spacer(Modifier.height(10.dp))
 
-        Text("翻页动画", style = TextStyle(color = ConsoleSubInk, fontSize = 12.sp))
+        Text("翻页动画", style = TextStyle(color = scheme.onSurfaceVariant, fontSize = 12.sp))
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ConsoleChip("覆盖", selected = false, enabled = false, onClick = {})
@@ -378,19 +393,22 @@ private fun ConsoleInterface(
         Spacer(Modifier.height(6.dp))
         Text(
             "覆盖 / 滑动 / 仿真 暂未开放（当前为竖向滚动）",
-            style = TextStyle(color = ConsoleSubInk.copy(alpha = 0.7f), fontSize = 10.sp),
+            style = TextStyle(color = scheme.onSurfaceVariant.copy(alpha = 0.7f), fontSize = 10.sp),
         )
 
         Spacer(Modifier.height(16.dp))
 
-        Text("主题背景", style = TextStyle(color = ConsoleSubInk, fontSize = 12.sp))
+        Text(
+            "阅读器主题（与全局 App 主题独立）",
+            style = TextStyle(color = scheme.onSurfaceVariant, fontSize = 12.sp),
+        )
         Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            ReaderTheme.entries.forEachIndexed { index, theme ->
+            ReaderTheme.entries.forEach { theme ->
                 ThemeDot(
                     theme = theme,
-                    selected = index == settings.theme,
-                    onClick = { onSettingsChange(settings.copy(theme = index)) },
+                    selected = theme == readerTheme,
+                    onClick = { onReaderThemeChange(theme) },
                 )
             }
         }
@@ -414,10 +432,11 @@ private fun SliderRow(
     step: Float,
     onChange: (Float) -> Unit,
 ) {
+    val scheme = MaterialTheme.colorScheme
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
             text = label,
-            style = TextStyle(color = ConsoleSubInk, fontSize = 13.sp),
+            style = TextStyle(color = scheme.onSurfaceVariant, fontSize = 13.sp),
             modifier = Modifier.width(38.dp),
         )
         StepButton("-") { onChange((value - step).coerceIn(range.start, range.endInclusive)) }
@@ -430,24 +449,25 @@ private fun SliderRow(
         StepButton("+") { onChange((value + step).coerceIn(range.start, range.endInclusive)) }
         Text(
             text = valueText,
-            style = TextStyle(color = ConsoleAccent, fontSize = 12.sp),
+            style = TextStyle(color = scheme.primary, fontSize = 12.sp),
             modifier = Modifier.width(40.dp),
-            textAlign = androidx.compose.ui.text.style.TextAlign.End,
+            textAlign = TextAlign.End,
         )
     }
 }
 
 @Composable
 private fun StepButton(text: String, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
     Box(
         modifier = Modifier
             .size(26.dp)
             .clip(CircleShape)
-            .background(ConsoleSurface)
+            .background(scheme.surfaceVariant)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text = text, style = TextStyle(color = ConsoleInk, fontSize = 14.sp))
+        Text(text = text, style = TextStyle(color = scheme.onSurface, fontSize = 14.sp))
     }
 }
 
@@ -458,10 +478,11 @@ private fun ConsoleChip(
     enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
+    val scheme = MaterialTheme.colorScheme
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(50))
-            .background(if (selected) ConsoleAccent else ConsoleSurface)
+            .background(if (selected) scheme.primary else scheme.surfaceVariant)
             .alpha(if (enabled) 1f else 0.35f)
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 7.dp),
@@ -469,7 +490,7 @@ private fun ConsoleChip(
         Text(
             text = label,
             style = TextStyle(
-                color = if (selected) Color.White else ConsoleInk,
+                color = if (selected) scheme.onPrimary else scheme.onSurface,
                 fontSize = 12.sp,
                 fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
             ),
@@ -479,15 +500,17 @@ private fun ConsoleChip(
 
 @Composable
 private fun ThemeDot(theme: ReaderTheme, selected: Boolean, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val dotScheme = readerScheme(theme)
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
             modifier = Modifier
                 .size(32.dp)
                 .clip(CircleShape)
-                .background(Color(theme.background))
+                .background(dotScheme.background)
                 .border(
                     width = if (selected) 2.dp else 1.dp,
-                    color = if (selected) ConsoleAccent else ConsoleSubInk.copy(alpha = 0.4f),
+                    color = if (selected) scheme.primary else scheme.onSurfaceVariant.copy(alpha = 0.4f),
                     shape = CircleShape,
                 )
                 .clickable(onClick = onClick),
@@ -497,7 +520,7 @@ private fun ThemeDot(theme: ReaderTheme, selected: Boolean, onClick: () -> Unit)
             text = theme.label,
             style = TextStyle(
                 fontSize = 10.sp,
-                color = if (selected) ConsoleAccent else ConsoleSubInk,
+                color = if (selected) scheme.primary else scheme.onSurfaceVariant,
             ),
         )
     }
@@ -510,14 +533,18 @@ private fun ConsoleSettings(
     settings: ReaderSettings,
     onSettingsChange: (ReaderSettings) -> Unit,
 ) {
+    val scheme = MaterialTheme.colorScheme
     Column(Modifier.padding(horizontal = 20.dp)) {
         Spacer(Modifier.height(10.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("AI 智能分析", style = TextStyle(color = ConsoleInk, fontSize = 15.sp, fontWeight = FontWeight.Medium))
+                Text(
+                    "AI 智能分析",
+                    style = TextStyle(color = scheme.onSurface, fontSize = 15.sp, fontWeight = FontWeight.Medium),
+                )
                 Text(
                     "开启后调用 ${ApiConfig.ZHIPU_MODEL} 提取人物与场景，消耗 Token",
-                    style = TextStyle(color = ConsoleSubInk, fontSize = 10.sp),
+                    style = TextStyle(color = scheme.onSurfaceVariant, fontSize = 10.sp),
                 )
             }
             Switch(
@@ -529,7 +556,7 @@ private fun ConsoleSettings(
         Spacer(Modifier.height(18.dp))
         Text(
             "API Key 已内置在 ApiConfig.kt，设置页不再提供输入框。",
-            style = TextStyle(color = ConsoleSubInk.copy(alpha = 0.8f), fontSize = 10.sp),
+            style = TextStyle(color = scheme.onSurfaceVariant.copy(alpha = 0.8f), fontSize = 10.sp),
         )
 
         Spacer(Modifier.height(20.dp))
@@ -539,21 +566,22 @@ private fun ConsoleSettings(
 // ── 全局二级菜单（控制台）────────────────────────────────────────────────────
 
 /**
- * 全屏悬浮控制台（v0.4.0，彻底替换 ModalBottomSheet）。
+ * 全屏悬浮液态玻璃控制台。
  *
- * 结构：
  * - 0.4 黑遮罩，点按关闭；
- * - 纯白面板贴底，无圆角、无拖拽把柄，带向上阴影；
- * - 面板内部由 [ReaderConsole] 负责「上一章 / Slider / 下一章 + 目录 / 界面 / 设置」；
+ * - 面板贴底，纯玻璃质感：模糊 + 低透明度底色 + 边缘高光描边 + 向上阴影；
  * - 底部 navigationBarsPadding 保证系统导航栏安全区。
  */
 @Composable
 fun ReaderConsoleOverlay(
     visible: Boolean,
+    hazeState: HazeState,
     chapters: List<Chapter>,
     currentChapter: Int,
     settings: ReaderSettings,
+    readerTheme: ReaderTheme,
     onSettingsChange: (ReaderSettings) -> Unit,
+    onReaderThemeChange: (ReaderTheme) -> Unit,
     onJumpChapter: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -566,7 +594,7 @@ fun ReaderConsoleOverlay(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.4f))
+                    .background(LumiColors.Scrim)
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
@@ -581,26 +609,23 @@ fun ReaderConsoleOverlay(
             enter = slideInVertically(initialOffsetY = { it }),
             exit = slideOutVertically(targetOffsetY = { it }),
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .shadow(
-                        elevation = 22.dp,
-                        shape = RectangleShape,
-                        clip = false,
-                        ambientColor = Color.Black.copy(alpha = 0.22f),
-                        spotColor = Color.Black.copy(alpha = 0.30f),
-                    )
-                    .background(ConsoleBg)
-                    .navigationBarsPadding(),
+            LiquidGlassPanel(
+                hazeState = hazeState,
+                modifier = Modifier.fillMaxWidth().navigationBarsPadding(),
+                shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
+                strong = true,
             ) {
-                ReaderConsole(
-                    chapters = chapters,
-                    currentChapter = currentChapter,
-                    settings = settings,
-                    onSettingsChange = onSettingsChange,
-                    onJumpChapter = onJumpChapter,
-                )
+                Column {
+                    ReaderConsole(
+                        chapters = chapters,
+                        currentChapter = currentChapter,
+                        settings = settings,
+                        readerTheme = readerTheme,
+                        onSettingsChange = onSettingsChange,
+                        onReaderThemeChange = onReaderThemeChange,
+                        onJumpChapter = onJumpChapter,
+                    )
+                }
             }
         }
     }

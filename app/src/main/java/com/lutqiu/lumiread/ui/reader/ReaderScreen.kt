@@ -4,13 +4,13 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.util.Log
-import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -32,6 +32,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -50,7 +51,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -89,27 +89,26 @@ import com.lutqiu.lumiread.data.VnLaunch
 import com.lutqiu.lumiread.services.AiSceneService
 import com.lutqiu.lumiread.services.HttpStatusException
 import com.lutqiu.lumiread.services.RequestQueue
+import com.lutqiu.lumiread.ui.components.LiquidGlassPanel
+import com.lutqiu.lumiread.ui.theme.LumiColors
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 阅读器 v0.4.0
+// 阅读器 v0.4.0（双层主题 + 液态玻璃）
 //
-// · LazyColumn 段落流：滑到当前章倒数第 2 段时静默追加下一章
-// · 长按正文：该段文字淡蓝高亮 + 文字正上方白色气泡菜单（不再是居中 Dialog）
-// · 点屏幕中心 → 全屏悬浮纯白控制台（Box + 0.4 遮罩，不是 ModalBottomSheet）
+// · 全部颜色来自 MaterialTheme.colorScheme（阅读器独立配色），零硬编码
+// · 长按正文：该段文字淡蓝高亮 + 文字正上方白色气泡菜单（不是居中 Dialog）
+// · 点屏幕中心 → 全屏液态玻璃控制台（Box + 0.4 遮罩，不是 ModalBottomSheet）
 // · 滚动状态提升到 ReaderScrollViewModel，VN 往返逐像素回位
 // ─────────────────────────────────────────────────────────────────────────────
 
 private const val TAG = "ReaderScroll"
-
-private val DividerGray = Color(0xFFEEEEEE)
-private val AccentBlue = Color(0xFF3B82F6)
-
-/** 长按高亮色：Color(0xFF3B82F6).copy(alpha = 0.2f)。 */
-private val HighlightBlue = AccentBlue.copy(alpha = 0.2f)
 
 /** 列表里的一段正文。 */
 private data class ReaderItem(
@@ -130,6 +129,8 @@ private data class MenuTarget(
 fun ReaderScreen(
     book: Book,
     scroll: ReaderScrollViewModel,
+    readerTheme: ReaderTheme,
+    onReaderThemeChange: (ReaderTheme) -> Unit,
     onBack: () -> Unit,
     onOpenVn: (VnLaunch) -> Unit,
     modifier: Modifier = Modifier,
@@ -140,6 +141,8 @@ fun ReaderScreen(
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
     val density = LocalDensity.current
+    val scheme = MaterialTheme.colorScheme
+    val hazeState: HazeState = rememberHazeState()
     val clipboard = remember(context) {
         context.getSystemService(android.content.ClipboardManager::class.java)
     }
@@ -174,13 +177,12 @@ fun ReaderScreen(
     var chromeVisible by remember { mutableStateOf(true) }
     var consoleVisible by remember { mutableStateOf(false) }
     var loadingText by remember { mutableStateOf<String?>(null) }
+    var toastMessage by remember { mutableStateOf<String?>(null) }
     var menuTarget by remember { mutableStateOf<MenuTarget?>(null) }
     /** 可见段落的根坐标，长按命中的就是手指下那一段。 */
     val itemBounds = remember { mutableStateMapOf<String, Rect>() }
 
-    val theme = ReaderTheme.entries[settings.theme.coerceIn(0, ReaderTheme.entries.lastIndex)]
-    val bg = Color(theme.background)
-    val ink = Color(theme.ink)
+    val ink = scheme.onBackground
 
     val items = remember(loadedChapters, book.id) {
         loadedChapters.flatMap { ci ->
@@ -261,6 +263,12 @@ fun ReaderScreen(
     else ((withinChapter + 1) * 100 / chapterItems.size).coerceIn(0, 100)
 
     var nowText by remember { mutableStateOf(formatClock(LocalTime.now())) }
+    LaunchedEffect(toastMessage) {
+        if (toastMessage != null) {
+            delay(2200)
+            toastMessage = null
+        }
+    }
     LaunchedEffect(Unit) {
         while (true) {
             nowText = formatClock(LocalTime.now())
@@ -291,7 +299,7 @@ fun ReaderScreen(
                 )
             } catch (t: Throwable) {
                 loadingText = null
-                Toast.makeText(context, friendlyError(t), Toast.LENGTH_LONG).show()
+                toastMessage = friendlyError(t)
             }
         }
     }
@@ -308,7 +316,7 @@ fun ReaderScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(bg)
+            .background(scheme.background)
             .pointerInput(Unit) {
                 detectTapGestures(
                     onTap = { offset ->
@@ -347,12 +355,14 @@ fun ReaderScreen(
     ) {
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .hazeSource(hazeState),
             contentPadding = PaddingValues(
                 start = settings.marginDp.dp,
                 end = settings.marginDp.dp,
-                top = if (chromeVisible) 60.dp else 20.dp,
-                bottom = if (chromeVisible) 56.dp else 28.dp,
+                top = if (chromeVisible) 72.dp else 24.dp,
+                bottom = if (chromeVisible) 64.dp else 28.dp,
             ),
             verticalArrangement = Arrangement.spacedBy(settings.paragraphSpacing.dp),
         ) {
@@ -391,7 +401,7 @@ fun ReaderScreen(
                     }
                     val body: AnnotatedString = if (selected) {
                         buildAnnotatedString {
-                            withStyle(SpanStyle(background = HighlightBlue)) {
+                            withStyle(SpanStyle(background = LumiColors.Highlight)) {
                                 append(item.text)
                             }
                         }
@@ -418,17 +428,17 @@ fun ReaderScreen(
             }
         }
 
-        // 顶部：只保留返回
+        // 顶部：液态玻璃返回栏
         AnimatedVisibility(
             visible = chromeVisible,
             modifier = Modifier.align(Alignment.TopCenter),
             enter = fadeIn() + slideInVertically { -it },
             exit = fadeOut() + slideOutVertically { -it },
         ) {
-            ReaderTopBar(background = bg, ink = ink, onBack = onBack)
+            ReaderTopBar(hazeState = hazeState, onBack = onBack)
         }
 
-        // 底部：时间 + 第N章 xx%
+        // 底部：液态玻璃时间 / 进度栏
         AnimatedVisibility(
             visible = chromeVisible,
             modifier = Modifier.align(Alignment.BottomCenter),
@@ -436,8 +446,7 @@ fun ReaderScreen(
             exit = fadeOut() + slideOutVertically { it },
         ) {
             ReaderBottomBar(
-                background = bg,
-                ink = ink,
+                hazeState = hazeState,
                 time = nowText,
                 chapterLabel = "第${visibleChapterIndex + 1}章",
                 percent = percent,
@@ -449,10 +458,14 @@ fun ReaderScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.45f)),
+                    .background(LumiColors.Scrim),
                 contentAlignment = Alignment.Center,
             ) {
-                Surface(shape = RoundedCornerShape(16.dp), color = Color.White) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = scheme.surface,
+                    border = BorderStroke(1.dp, scheme.outlineVariant),
+                ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 22.dp, vertical = 18.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -460,22 +473,52 @@ fun ReaderScreen(
                         CircularProgressIndicator(
                             modifier = Modifier.size(20.dp),
                             strokeWidth = 2.dp,
-                            color = AccentBlue,
+                            color = scheme.primary,
                         )
                         Spacer(Modifier.width(14.dp))
-                        Text(text = message, style = TextStyle(fontSize = 14.sp, color = Color(0xFF1F2024)))
+                        Text(
+                            text = message,
+                            style = TextStyle(fontSize = 14.sp, color = scheme.onSurface),
+                        )
                     }
                 }
             }
         }
 
-        // 全屏悬浮纯白控制台（不再是 ModalBottomSheet）
+        // 主题化轻提示（替代系统 Toast，跟随阅读器配色）
+        toastMessage?.let { message ->
+            androidx.compose.animation.AnimatedVisibility(
+                visible = true,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 96.dp),
+                enter = fadeIn(),
+                exit = fadeOut(),
+            ) {
+                LiquidGlassPanel(
+                    hazeState = hazeState,
+                    shape = RoundedCornerShape(50),
+                    strong = true,
+                ) {
+                    Text(
+                        text = message,
+                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+                        style = TextStyle(fontSize = 12.sp, color = scheme.onSurface),
+                    )
+                }
+            }
+        }
+
+        // 全屏悬浮液态玻璃控制台（不再是 ModalBottomSheet）
         ReaderConsoleOverlay(
             visible = consoleVisible,
+            hazeState = hazeState,
             chapters = book.chapters,
             currentChapter = visibleChapterIndex,
             settings = settings,
+            readerTheme = readerTheme,
             onSettingsChange = { updateSettings(it) },
+            onReaderThemeChange = onReaderThemeChange,
             onJumpChapter = {
                 jumpTo(it)
                 consoleVisible = false
@@ -506,7 +549,7 @@ fun ReaderScreen(
                         android.content.ClipData.newPlainText("lumiread", target.text),
                     )
                     menuTarget = null
-                    Toast.makeText(context, "已复制本段", Toast.LENGTH_SHORT).show()
+                    toastMessage = "已复制本段"
                 },
             )
         }
@@ -560,11 +603,13 @@ private class BubbleAboveProvider(
 
 @Composable
 private fun TextBubbleMenu(onGenerate: () -> Unit, onCopy: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Surface(
             shape = RoundedCornerShape(10.dp),
-            color = Color.White,
+            color = scheme.surface,
             shadowElevation = 10.dp,
+            border = BorderStroke(1.dp, scheme.outlineVariant),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 BubbleAction(text = "生成视觉小说场景", onClick = onGenerate)
@@ -572,7 +617,7 @@ private fun TextBubbleMenu(onGenerate: () -> Unit, onCopy: () -> Unit) {
                     Modifier
                         .width(1.dp)
                         .height(18.dp)
-                        .background(Color(0xFFEDEEF0)),
+                        .background(scheme.outlineVariant),
                 )
                 BubbleAction(text = "复制文本", onClick = onCopy)
             }
@@ -585,35 +630,41 @@ private fun TextBubbleMenu(onGenerate: () -> Unit, onCopy: () -> Unit) {
                 lineTo(size.width / 2f, size.height)
                 close()
             }
-            drawPath(p, Color.White)
+            drawPath(p, scheme.surface)
         }
     }
 }
 
 @Composable
 private fun BubbleAction(text: String, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
     Text(
         text = text,
         modifier = Modifier
             .clip(RoundedCornerShape(10.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 11.dp),
-        style = TextStyle(fontSize = 13.sp, color = Color(0xFF1F2024), fontWeight = FontWeight.Medium),
+        style = TextStyle(fontSize = 13.sp, color = scheme.onSurface, fontWeight = FontWeight.Medium),
     )
 }
 
 // ── 顶栏 / 底栏 ─────────────────────────────────────────────────────────────
 
 @Composable
-private fun ReaderTopBar(background: Color, ink: Color, onBack: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(background)
-            .statusBarsPadding(),
+private fun ReaderTopBar(hazeState: HazeState, onBack: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    LiquidGlassPanel(
+        hazeState = hazeState,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(bottomStart = 20.dp, bottomEnd = 20.dp),
+        strong = true,
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .height(52.dp)
+                .padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Row(
@@ -623,32 +674,37 @@ private fun ReaderTopBar(background: Color, ink: Color, onBack: () -> Unit) {
                     .padding(horizontal = 10.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("‹", style = TextStyle(fontSize = 22.sp, color = ink, fontWeight = FontWeight.Light))
+                Text("‹", style = TextStyle(fontSize = 22.sp, color = scheme.onSurface, fontWeight = FontWeight.Light))
                 Spacer(Modifier.width(4.dp))
-                Text("返回", style = TextStyle(fontSize = 14.sp, color = ink))
+                Text("返回", style = TextStyle(fontSize = 14.sp, color = scheme.onSurface))
             }
         }
-        Box(Modifier.fillMaxWidth().height(1.dp).background(DividerGray))
     }
 }
 
 @Composable
 private fun ReaderBottomBar(
-    background: Color,
-    ink: Color,
+    hazeState: HazeState,
     time: String,
     chapterLabel: String,
     percent: Int,
 ) {
-    Column(Modifier.fillMaxWidth().background(background)) {
-        Box(Modifier.fillMaxWidth().height(1.dp).background(DividerGray))
+    val scheme = MaterialTheme.colorScheme
+    LiquidGlassPanel(
+        hazeState = hazeState,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 24.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text(time, style = TextStyle(fontSize = 11.sp, color = ink.copy(alpha = 0.55f)))
-            Text("$chapterLabel $percent%", style = TextStyle(fontSize = 11.sp, color = ink.copy(alpha = 0.55f)))
+            Text(time, style = TextStyle(fontSize = 11.sp, color = scheme.onSurfaceVariant))
+            Text(
+                "$chapterLabel $percent%",
+                style = TextStyle(fontSize = 11.sp, color = scheme.onSurfaceVariant),
+            )
         }
     }
 }

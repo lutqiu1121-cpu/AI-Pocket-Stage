@@ -158,20 +158,142 @@ class ParserServiceTest {
 
     @Test
     fun splitTxt_splitsOnChapterHeadings() {
+        val filler = "这是一段足够长的正文，用来避免被 Ghost 章节过滤器误判成标题碎片。".repeat(3)
         val text = """
-            前言一句话。
+            引子：这是一句题记。
             第一章 开始
-            正文一。
+            $filler
             第二章 继续
-            正文二。
+            $filler
             第十章 终章
-            正文三。
+            $filler
         """.trimIndent()
 
         val chapters = ParserService.splitTxt(text)
         assertEquals("前言 + 3 章", 4, chapters.size)
         assertEquals("前言", chapters[0].title)
         assertEquals("第一章 开始", chapters[1].title)
-        assertTrue(chapters[3].content.contains("正文三"))
+        assertTrue(chapters[3].content.contains("这是一段足够长的正文"))
+    }
+
+    @Test
+    fun splitTxt_matchesCompoundHeadings() {
+        val filler = "正文内容足够长，确保这一章不会被 Ghost 过滤器合并到上一章里去。".repeat(3)
+        val filler2 = "第二段：换行后仍然要保留段落分隔，绝不能粘成一大坨。".repeat(2)
+        val text = """
+              楔子
+            $filler
+            $filler2
+            序章 起点
+            $filler
+            $filler2
+            第一章 雨夜
+            $filler
+            $filler2
+            第十二卷 风暴
+            $filler
+            $filler2
+            番外 后日谈
+            $filler
+            $filler2
+            后记
+            $filler
+            $filler2
+        """.trimIndent()
+
+        val chapters = ParserService.splitTxt(text)
+        assertEquals("6 个标题全部识别", 6, chapters.size)
+        assertEquals("楔子", chapters[0].title)
+        assertEquals("序章 起点", chapters[1].title)
+        assertEquals("第十二卷 风暴", chapters[3].title)
+        assertEquals("番外 后日谈", chapters[4].title)
+        assertEquals("后记", chapters[5].title)
+        assertTrue("段落必须 \n\n 分隔", chapters[1].content.contains("\n\n"))
+    }
+
+    @Test
+    fun splitTxt_mergesGhostChapterIntoPrevious() {
+        val filler = "这一章正文足够长，不会被 Ghost 过滤器当作误判标题。".repeat(4)
+        val text = """
+            第一章 长章节
+            $filler
+            第二章
+            只有一句话。
+            第三章 正常章节
+            $filler
+        """.trimIndent()
+
+        val chapters = ParserService.splitTxt(text)
+        assertEquals("Ghost 章必须并入上一章", 2, chapters.size)
+        assertEquals("第一章 长章节", chapters[0].title)
+        assertTrue("被合并的短正文不能丢", chapters[0].content.contains("只有一句话。"))
+        assertEquals("第三章 正常章节", chapters[1].title)
+    }
+
+    @Test
+    fun splitTxt_rejectsHeadingWithLongTail() {
+        // 行尾超过 30 字 → 不是标题，按正文处理
+        val longTail = "第一章 " + "这是很长的一句正文".repeat(5)
+        val text = "$longTail\n正文正文。"
+        val chapters = ParserService.splitTxt(text)
+        assertEquals("不应切章", 1, chapters.size)
+    }
+
+    @Test
+    fun parseNcxToc_extractsHrefAndTitle() {
+        val ncx = """
+            <ncx><navMap>
+              <navPoint id="n1"><navLabel><text>第一章 雨夜</text></navLabel><content src="Text/ch1.xhtml"/></navPoint>
+              <navPoint id="n2"><navLabel><text>第二章 清晨</text></navLabel><content src="Text/ch2.xhtml#part"/></navPoint>
+            </navMap></ncx>
+        """.trimIndent()
+        val toc = ParserService.parseNcxToc(ncx)
+        assertEquals(2, toc.size)
+        assertEquals("text/ch1.xhtml", toc[0].href)
+        assertEquals("第一章 雨夜", toc[0].title)
+        assertEquals("text/ch2.xhtml", toc[1].href)
+    }
+
+    @Test
+    fun parseNavToc_extractsAnchors() {
+        val nav = """
+            <nav epub:type="toc"><ol>
+              <li><a href="Text/ch1.xhtml"><span>第一章</span></a></li>
+              <li><a href="Text/ch2.xhtml">第二章</a></li>
+            </ol></nav>
+        """.trimIndent()
+        val toc = ParserService.parseNavToc(nav)
+        assertEquals(2, toc.size)
+        assertEquals("text/ch1.xhtml", toc[0].href)
+        assertEquals("第一章", toc[0].title)
+    }
+
+    @Test
+    fun assembleEpubChapters_appendsOrphanSpineToPrevious() {
+        val toc = listOf(
+            ParserService.TocEntry("text/ch1.xhtml", "第一章"),
+            ParserService.TocEntry("text/ch2.xhtml", "第二章"),
+        )
+        val spine = listOf(
+            ParserService.SpineDoc("Text/ch1.xhtml", "第一章", "第一章正文"),
+            ParserService.SpineDoc("Text/ch2.xhtml", "第二章", "第二章正文"),
+            ParserService.SpineDoc("Text/fragment.xhtml", "碎片", "未出现在目录里的碎片正文"),
+        )
+
+        val chapters = ParserService.assembleEpubChapters(toc, spine)
+        assertEquals("碎片不允许独立成章", 2, chapters.size)
+        assertEquals("第一章", chapters[0].title)
+        assertTrue("碎片应 append 到上一章末尾", chapters[1].content.contains("碎片正文"))
+        assertTrue("第二章正文不能被覆盖", chapters[1].content.contains("第二章正文"))
+    }
+
+    @Test
+    fun assembleEpubChapters_withoutToc_fallsBackToSpine() {
+        val spine = listOf(
+            ParserService.SpineDoc("Text/a.xhtml", "A", "正文 A"),
+            ParserService.SpineDoc("Text/b.xhtml", "B", "正文 B"),
+        )
+        val chapters = ParserService.assembleEpubChapters(emptyList(), spine)
+        assertEquals(2, chapters.size)
     }
 }
