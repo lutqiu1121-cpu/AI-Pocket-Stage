@@ -42,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import com.lutqiu.lumiread.ui.theme.LumiColors
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
@@ -94,10 +95,14 @@ fun LumiReadApp() {
     }
     val scheme = if (dark) AppDarkScheme else AppLightScheme
 
-    // 状态栏 / 导航栏图标颜色跟随当前 App 主题
+    // 状态栏 / 导航栏底色与图标颜色跟随当前 App 主题
+    @Suppress("DEPRECATION")
     SideEffect {
         val window = view.context.findActivity()?.window ?: return@SideEffect
         val controller = WindowCompat.getInsetsController(window, view)
+        window.statusBarColor = scheme.background.toArgb()
+        window.navigationBarColor = scheme.background.toArgb()
+        window.isNavigationBarContrastEnforced = false
         controller.isAppearanceLightStatusBars = !dark
         controller.isAppearanceLightNavigationBars = !dark
     }
