@@ -541,7 +541,7 @@ fun ReaderScreen(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(bottom = 96.dp),
-                shape = RoundedCornerShape(50),
+                shape = lumiShape(),
                 strong = true,
             ) {
                 Text(

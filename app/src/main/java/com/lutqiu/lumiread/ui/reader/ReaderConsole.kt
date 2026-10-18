@@ -455,7 +455,7 @@ private fun ConsoleChip(
     val scheme = MaterialTheme.colorScheme
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(50))
+            .clip(lumiShape())
             .background(if (selected) scheme.primary else scheme.surfaceVariant)
             .alpha(if (enabled) 1f else 0.35f)
             .clickable(enabled = enabled, onClick = onClick)
