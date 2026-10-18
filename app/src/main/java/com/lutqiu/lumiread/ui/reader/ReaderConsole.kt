@@ -35,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -57,10 +58,10 @@ import com.lutqiu.lumiread.services.ApiConfigRepository
 //   设置      ：AI 开关 + 智谱 Key
 // ─────────────────────────────────────────────────────────────────────────────
 
-val ConsoleBg = Color(0xFF141518)
-val ConsoleSurface = Color(0xFF1F2126)
-val ConsoleInk = Color(0xFFE8EAED)
-val ConsoleSubInk = Color(0xFF9AA0A6)
+val ConsoleBg = Color(0xFFFFFFFF)
+val ConsoleSurface = Color(0xFFF2F3F5)
+val ConsoleInk = Color(0xFF1A1B1E)
+val ConsoleSubInk = Color(0xFF6B7078)
 val ConsoleAccent = Color(0xFF3B82F6)
 
 private const val PAGE_HOME = 0
@@ -81,6 +82,7 @@ fun ReaderConsole(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .shadow(18.dp, RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
             .background(ConsoleBg, RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
             .padding(top = 10.dp, bottom = 12.dp),
     ) {
@@ -543,10 +545,6 @@ private fun ConsoleSettings(
 
         Spacer(Modifier.height(14.dp))
 
-        Text(
-            "智谱 API Key 已移到「设置」页（全局导航第三个 Tab）",
-            style = TextStyle(color = ConsoleSubInk, fontSize = 11.sp),
-        )
         Spacer(Modifier.height(20.dp))
     }
 }

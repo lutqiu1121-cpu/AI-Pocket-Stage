@@ -35,7 +35,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import com.lutqiu.lumiread.data.Book
 import com.lutqiu.lumiread.data.ReadingMode
-import com.lutqiu.lumiread.services.AiScene
+import com.lutqiu.lumiread.data.VnLaunch
 import com.lutqiu.lumiread.ui.bookshelf.BookshelfScreen
 import com.lutqiu.lumiread.ui.reader.ReaderScreen
 import com.lutqiu.lumiread.ui.settings.GlobalSettingsScreen
@@ -55,21 +55,16 @@ private data class OpenedBook(val book: Book, val mode: ReadingMode)
 @Composable
 fun LumiReadApp() {
     var opened by remember { mutableStateOf<OpenedBook?>(null) }
-    var aiScene by remember { mutableStateOf<AiScene?>(null) }
+    var vn by remember { mutableStateOf<VnLaunch?>(null) }
 
     val current = opened
     if (current != null) {
         BackHandler { opened = null }
 
-        val scene = aiScene
-        if (scene != null) {
-            BackHandler { aiScene = null }
-            StageScreen(
-                text = scene.description,
-                chapterLabel = "AI 场景",
-                backgroundImagePath = scene.imagePath,
-                onBack = { aiScene = null },
-            )
+        val vnLaunch = vn
+        if (vnLaunch != null) {
+            BackHandler { vn = null }
+            StageScreen(vn = vnLaunch, onBack = { vn = null })
             return
         }
 
@@ -77,14 +72,18 @@ fun LumiReadApp() {
             ReadingMode.READER -> ReaderScreen(
                 book = current.book,
                 onBack = { opened = null },
-                onOpenScene = { aiScene = it },
+                onOpenVn = { vn = it },
             )
 
             ReadingMode.VN -> {
-                val chapter = current.book.chapters.firstOrNull()
                 StageScreen(
-                    text = chapter?.content.orEmpty(),
-                    chapterLabel = listOfNotNull(current.book.title, chapter?.title).joinToString(" · "),
+                    vn = VnLaunch(
+                        book = current.book,
+                        chapterIndex = 0,
+                        paragraphIndex = 0,
+                        sceneDesc = "",
+                        imagePath = null,
+                    ),
                     onBack = { opened = null },
                 )
             }
@@ -154,7 +153,7 @@ private fun RowScope.AppTab(
         selected = selected,
         onClick = onClick,
         icon = icon,
-        label = { Text(label, fontSize = 11.sp) },
+        label = { Text(label, fontSize = 11.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.SansSerif) },
         colors = NavigationBarItemDefaults.colors(
             selectedIconColor = LumiBlue,
             selectedTextColor = LumiBlue,

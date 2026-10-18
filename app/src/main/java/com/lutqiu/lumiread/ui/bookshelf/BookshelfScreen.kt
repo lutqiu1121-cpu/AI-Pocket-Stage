@@ -10,6 +10,7 @@ import java.io.File
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -316,20 +317,22 @@ private fun BookRow(
 @Composable
 private fun ModeChip(mode: ReadingMode, onClick: () -> Unit) {
     val isReader = mode == ReadingMode.READER
+    val solid = if (isReader) Accent else Color(0xFF7C5CFF)
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(50))
-            .background(if (isReader) Accent.copy(alpha = 0.12f) else Color(0xFF7C5CFF).copy(alpha = 0.14f))
+            .background(solid)
+            .border(2.dp, solid.copy(alpha = 0.35f), RoundedCornerShape(50))
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+            .padding(horizontal = 12.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = if (isReader) "文本" else "剧场",
             style = TextStyle(
                 fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-                color = if (isReader) Accent else Color(0xFF7C5CFF),
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White,
             ),
         )
     }

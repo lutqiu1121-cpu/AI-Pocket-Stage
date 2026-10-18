@@ -1,128 +1,157 @@
-@file:OptIn(ExperimentalHazeApi::class)
-
 package com.lutqiu.lumiread.ui.stage
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import android.app.Activity
-import android.content.Context
-import android.content.ContextWrapper
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextIndent
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.zIndex
-import dev.chrisbanes.haze.ExperimentalHazeApi
-import dev.chrisbanes.haze.HazeInput
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.glass.GlassStyle
-import dev.chrisbanes.haze.glass.hazeGlass
-import dev.chrisbanes.haze.hazeSource
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import coil.compose.AsyncImage
-import dev.chrisbanes.haze.rememberHazeState
+import com.lutqiu.lumiread.data.VnLaunch
+import com.lutqiu.lumiread.ui.reader.VnSceneController
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.io.File
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 16:9 叙事舞台（第三期：删掉全部假数据，文本一律由调用方传入）
-//
-// 结构：浅灰画布 → 正中央 16:9 舞台 → 背景占位 + 立绘占位 + 底部对话框(Haze)
-//      + 左右悬浮胶囊 + 顶部信息栏
-// 文本为空 → 对话框就是空的，页面里不存在任何写死的旁白。
-// ─────────────────────────────────────────────────────────────────────────────
-
-private val CanvasGray = Color(0xFFF7F8FA)
-private val StageBlack = Color(0xFF000000)
-private val BackdropTop = Color(0xFF34363C)
-private val BackdropBottom = Color(0xFF1B1C1F)
-
-/** 立绘占位：极淡透明蓝。 */
-private val PortraitBlue = Color(0xFF3B82F6).copy(alpha = 0.2f)
-
 /**
- * @param text 当前旁白；空串 = 空对话框（不伪造任何内容）。
- * @param chapterLabel 顶部信息栏文案。
- * @param onBack 非空时右上角出现「书架」返回胶囊。
+ * VN 剧场模式（三段式）：
+ * 上半 1:1 画面区 / 中间对话框（打字机）/ 底部「返回上一段 · 菜单」。
+ *
+ * 交互：点画面或对话框 → 打字中则立刻补全，否则进入下一段；
+ * 图片由 [VnSceneController] 静默预加载，未就绪时显示深色占位 + 小 loading，好了 Crossfade 淡入。
  */
 @Composable
 fun StageScreen(
-    text: String = "",
-    chapterLabel: String = "第1章 正文 · 场景地点",
-    onBack: (() -> Unit)? = null,
-    backgroundImagePath: String? = null,
-    modifier: Modifier = Modifier,
+    vn: VnLaunch,
+    onBack: () -> Unit,
 ) {
-    val hazeState = rememberHazeState()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
-    // 剧场页同样全屏沉浸：隐藏系统状态栏 / 导航栏，退出时恢复
-    val view = LocalView.current
-    DisposableEffect(view) {
-        val window = view.context.findActivity()?.window
-        val controller = window?.let { WindowCompat.getInsetsController(it, view) }
-        controller?.apply {
-            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            hide(WindowInsetsCompat.Type.systemBars())
-        }
-        onDispose { controller?.show(WindowInsetsCompat.Type.systemBars()) }
+    var chapterIndex by remember { mutableIntStateOf(vn.chapterIndex) }
+    var paraIndex by remember { mutableIntStateOf(vn.paragraphIndex) }
+
+    val chapter = vn.book.chapters.getOrNull(chapterIndex)
+    val controller = remember(chapterIndex, chapter?.content) {
+        chapter?.let { VnSceneController(context, it) }
     }
 
-    MaterialTheme {
+    // 基准锁定：进入 VN 的第一段 = 长按时选中的第 N 段，图也钉在这一段
+    LaunchedEffect(controller) {
+        if (chapterIndex == vn.chapterIndex) {
+            controller?.seed(vn.paragraphIndex, vn.imagePath)
+        }
+    }
+
+    // 静默预加载 N+1 / N+2
+    LaunchedEffect(controller, paraIndex, chapterIndex) {
+        val c = controller ?: return@LaunchedEffect
+        launch { c.preload(paraIndex + 1) }
+        launch { c.preload(paraIndex + 2) }
+    }
+
+    val text = controller?.paragraph(paraIndex).orEmpty()
+    val imagePath = controller?.image(paraIndex)
+    val imageLoading = controller?.isLoading(paraIndex) == true
+
+    // 打字机
+    var shown by remember(paraIndex, chapterIndex) { mutableIntStateOf(0) }
+    LaunchedEffect(paraIndex, chapterIndex, text) {
+        shown = 0
+        var i = 0
+        while (i < text.length) {
+            delay(16)
+            i++
+            shown = i
+        }
+    }
+    val typing = shown < text.length
+
+    fun goNext() {
+        if (paraIndex + 1 < (controller?.size ?: 0)) {
+            paraIndex += 1
+        } else if (chapterIndex < vn.book.chapters.lastIndex) {
+            chapterIndex += 1
+            paraIndex = 0
+        }
+    }
+
+    fun goPrev() {
+        if (paraIndex > 0) {
+            paraIndex -= 1
+        } else if (chapterIndex > 0) {
+            chapterIndex -= 1
+            paraIndex = (vn.book.chapters.getOrNull(chapterIndex)?.let { paragraphsSize(it.content) } ?: 1) - 1
+        }
+    }
+
+    fun revealOrNext() {
+        if (typing) shown = text.length else goNext()
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF101114)),
+    ) {
+        // ① 上半：1:1 画面区
         Box(
-            modifier = modifier
-                .fillMaxSize()
-                .background(CanvasGray),
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .pointerInput(Unit) { detectTapGestures { revealOrNext() } },
             contentAlignment = Alignment.Center,
         ) {
             Box(
                 modifier = Modifier
-                    .fillMaxWidth(0.9f)
-                    .aspectRatio(16f / 9f)
-                    .shadow(elevation = 24.dp, shape = RoundedCornerShape(12.dp))
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(StageBlack),
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .aspectRatio(1f)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0xFF1B1C1F)),
             ) {
-                // ① 背景：AI 生图优先，否则深灰占位（Haze 取景源）
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .hazeSource(hazeState),
-                ) {
-                    if (backgroundImagePath != null) {
+                Crossfade(
+                    targetState = imagePath,
+                    animationSpec = tween(durationMillis = 420),
+                    label = "vn-scene",
+                ) { path ->
+                    if (path != null) {
                         AsyncImage(
-                            model = File(backgroundImagePath),
-                            contentDescription = "AI 生成的场景",
+                            model = File(path),
+                            contentDescription = "AI 场景",
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize(),
                         )
@@ -130,182 +159,74 @@ fun StageScreen(
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .background(Brush.verticalGradient(listOf(BackdropTop, BackdropBottom))),
-                        )
+                                .background(Color(0xFF1B1C1F)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = "画面生成中…",
+                                style = TextStyle(fontSize = 12.sp, color = Color(0xFF7A7F87)),
+                            )
+                        }
                     }
                 }
 
-                // ② 立绘占位：左侧固定 120dp 宽，高 80%，底部对齐
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .fillMaxHeight(0.8f)
-                        .width(120.dp)
-                        .background(PortraitBlue),
-                )
-
-                // ③ 顶部信息栏
-                InfoChip(
-                    text = chapterLabel,
-                    modifier = Modifier.align(Alignment.TopStart).padding(16.dp),
-                )
-
-                if (onBack != null) {
-                    ReturnChip(
-                        onClick = onBack,
+                if (imageLoading) {
+                    CircularProgressIndicator(
                         modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(16.dp)
-                            .zIndex(10f),
+                            .align(Alignment.BottomEnd)
+                            .padding(12.dp)
+                            .size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = Color(0xFF3B82F6),
                     )
                 }
-
-                // ④ 悬浮按钮（zIndex 10：永远压在对话框之上，不被 28% 对话框吃掉）
-                FloatingColumn(
-                    labels = listOf("上一句", "菜单"),
-                    modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .padding(start = 16.dp)
-                        .zIndex(10f),
-                )
-                FloatingColumn(
-                    labels = listOf("下一句", "设置"),
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .padding(end = 16.dp)
-                        .zIndex(10f),
-                )
-
-                // ⑤ 对话框：高 28%，Haze 毛玻璃 + 0.6 黑遮罩；无文本则空着
-                NarrationDialog(
-                    text = text,
-                    hazeState = hazeState,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .fillMaxHeight(0.28f),
-                )
             }
         }
-    }
-}
 
-@Composable
-private fun NarrationDialog(
-    text: String,
-    hazeState: HazeState,
-    modifier: Modifier = Modifier,
-) {
-    val input = remember(hazeState) { HazeInput.Sources(hazeState) }
-    val style = remember {
-        GlassStyle.regular.then {
-            shape(RoundedCornerShape(0.dp))
-            tint(Color.Black.copy(alpha = 0.42f))
-        }
-    }
-
-    Box(
-        modifier = modifier
-            .hazeGlass(input = input, style = style)
-            // 0.6 黑遮罩：压在毛玻璃之上，保证文字对比度
-            .background(Color.Black.copy(alpha = 0.6f)),
-        contentAlignment = Alignment.CenterStart,
-    ) {
-        if (text.isNotEmpty()) {
+        // ② 对话框
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color.Black.copy(alpha = 0.55f))
+                .pointerInput(Unit) { detectTapGestures { revealOrNext() } }
+                .padding(horizontal = 24.dp, vertical = 18.dp),
+        ) {
             Text(
-                text = text,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 28.dp, vertical = 20.dp),
+                text = text.take(shown),
                 style = TextStyle(
                     color = Color(0xFFF3F5F9),
-                    fontSize = 18.sp,
-                    lineHeight = 28.8.sp, // 18sp × 1.6
-                    textIndent = TextIndent(firstLine = 2.em),
-                    letterSpacing = 0.2.sp,
+                    fontSize = 16.sp,
+                    lineHeight = 26.sp,
                 ),
             )
         }
-    }
-}
 
-/** 顶部信息栏胶囊。 */
-@Composable
-private fun InfoChip(text: String, modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(50))
-            .background(Color.Black.copy(alpha = 0.45f))
-            .padding(horizontal = 14.dp, vertical = 7.dp),
-    ) {
-        Text(
-            text = text,
-            style = TextStyle(
-                color = Color(0xFFF3F5F9),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-                letterSpacing = 0.3.sp,
-            ),
-        )
-    }
-}
-
-/** 右上角返回书架胶囊。 */
-@Composable
-private fun ReturnChip(onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(50))
-            .background(Color.Black.copy(alpha = 0.5f))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 7.dp),
-    ) {
-        Text(
-            text = "‹ 书架",
-            style = TextStyle(color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium),
-        )
-    }
-}
-
-/** 舞台侧边悬浮胶囊按钮列。 */
-@Composable
-private fun FloatingColumn(labels: List<String>, modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        labels.forEach { label -> CapsuleButton(label) }
+        // ③ 底部操作栏
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFF101114))
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            StageAction(text = "‹ 返回上一段", onClick = ::goPrev)
+            StageAction(text = "菜单", onClick = onBack)
+        }
     }
 }
 
 @Composable
-private fun CapsuleButton(text: String) {
-    Row(
+private fun StageAction(text: String, onClick: () -> Unit) {
+    Text(
+        text = text,
         modifier = Modifier
-            .widthIn(min = 72.dp)
-            .clip(RoundedCornerShape(50))
-            .background(Color.Black.copy(alpha = 0.5f))
-            .padding(horizontal = 16.dp, vertical = 9.dp),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = text,
-            style = TextStyle(color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium),
-        )
-    }
+            .clip(CircleShape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        style = TextStyle(fontSize = 13.sp, color = Color(0xFFD8DCE2), fontWeight = FontWeight.Medium),
+    )
 }
 
-private tailrec fun Context.findActivity(): Activity? = when (this) {
-    is Activity -> this
-    is ContextWrapper -> baseContext.findActivity()
-    else -> null
-}
-
-@Preview(name = "16:9 Stage (empty)", showBackground = true, widthDp = 400, heightDp = 800)
-@Composable
-private fun StageScreenPreview() {
-    StageScreen()
-}
+private fun paragraphsSize(content: String): Int =
+    if (content.isBlank()) 0 else content.split(Regex("\\n{2,}")).count { it.isNotBlank() }

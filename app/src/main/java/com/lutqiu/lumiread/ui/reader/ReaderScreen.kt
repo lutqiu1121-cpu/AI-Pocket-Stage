@@ -100,13 +100,16 @@ private data class ReaderItem(
 fun ReaderScreen(
     book: Book,
     onBack: () -> Unit,
-    onOpenScene: (AiScene) -> Unit,
+    onOpenVn: (com.lutqiu.lumiread.data.VnLaunch) -> Unit,
     modifier: Modifier = Modifier,
     initialChapterIndex: Int = 0,
 ) {
     val context = LocalContext.current
     val view = LocalView.current
     val scope = rememberCoroutineScope()
+    val clipboard = remember(context) {
+        context.getSystemService(android.content.ClipboardManager::class.java)
+    }
 
     // 进入阅读页 → 系统状态栏 / 导航栏完全隐藏；离开时恢复
     DisposableEffect(view) {
@@ -138,6 +141,7 @@ fun ReaderScreen(
     var chromeVisible by remember { mutableStateOf(true) }
     var consoleVisible by remember { mutableStateOf(false) }
     var loadingText by remember { mutableStateOf<String?>(null) }
+    var menuTarget by remember { mutableStateOf<MenuTarget?>(null) }
 
     val theme = ReaderTheme.entries[settings.theme.coerceIn(0, ReaderTheme.entries.lastIndex)]
     val bg = Color(theme.background)
@@ -196,6 +200,34 @@ fun ReaderScreen(
         }
     }
 
+    fun startGenerate(target: MenuTarget) {
+        loadingText = "AI 构思场景…"
+        scope.launch {
+            try {
+                val scene = RequestQueue.submit("ai-analyze") {
+                    AiSceneService.analyze(context, target.text)
+                }
+                loadingText = "AI 绘制画面…"
+                val path = RequestQueue.submit("ai-image") {
+                    AiSceneService.generateImage(context, scene.prompt, target.paragraphIndex.toLong())
+                }
+                loadingText = null
+                onOpenVn(
+                    com.lutqiu.lumiread.data.VnLaunch(
+                        book = book,
+                        chapterIndex = target.chapterIndex,
+                        paragraphIndex = target.paragraphIndex,
+                        sceneDesc = scene.description,
+                        imagePath = path,
+                    ),
+                )
+            } catch (t: Throwable) {
+                loadingText = null
+                Toast.makeText(context, friendlyError(t), Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     fun jumpTo(index: Int) {
         val target = index.coerceIn(0, lastIndex)
         chapterIndex = target
@@ -221,36 +253,9 @@ fun ReaderScreen(
                         }
                     },
                     onLongPress = {
-                        val chapter = book.chapters.getOrNull(visibleChapterIndex)
-                        val content = chapter?.content.orEmpty()
-                        if (content.isBlank() || loadingText != null) return@detectTapGestures
-                        if (!settings.aiEnabled) {
-                            Toast.makeText(context, "AI 智能分析已关闭（控制台里可开启）", Toast.LENGTH_SHORT).show()
-                            return@detectTapGestures
-                        }
-                        val snippet = extractContext(content, 0.5f)
-                        loadingText = "AI 构思场景…"
-                        scope.launch {
-                            try {
-                                val scene = RequestQueue.submit("ai-analyze") {
-                                    AiSceneService.analyze(context, snippet)
-                                }
-                                if (!scene.changed) {
-                                    loadingText = null
-                                    Toast.makeText(context, "这一段没有场景变化", Toast.LENGTH_SHORT).show()
-                                    return@launch
-                                }
-                                loadingText = "AI 绘制画面…"
-                                val seed = System.currentTimeMillis() % 1_000_000
-                                val imagePath = RequestQueue.submit("ai-image") {
-                                    AiSceneService.generateImage(context, scene.prompt, seed)
-                                }
-                                loadingText = null
-                                onOpenScene(scene.copy(imagePath = imagePath))
-                            } catch (t: Throwable) {
-                                loadingText = null
-                                Toast.makeText(context, friendlyError(t), Toast.LENGTH_LONG).show()
-                            }
+                        val item = items.getOrNull(firstVisible)
+                        if (item != null) {
+                            menuTarget = MenuTarget(item.chapterIndex, item.paragraphIndex, item.text)
                         }
                     },
                 )
@@ -360,6 +365,24 @@ fun ReaderScreen(
                 }
             }
         }
+    }
+
+    // 长按菜单（纯白 Dialog）
+    menuTarget?.let { target ->
+        ReaderTextMenu(
+            onDismiss = { menuTarget = null },
+            onGenerate = {
+                menuTarget = null
+                startGenerate(target)
+            },
+            onCopy = {
+                clipboard?.setPrimaryClip(
+                    android.content.ClipData.newPlainText("lumiread", target.text),
+                )
+                menuTarget = null
+                Toast.makeText(context, "已复制本段", Toast.LENGTH_SHORT).show()
+            },
+        )
     }
 
     // 沉浸式控制台
@@ -491,3 +514,40 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 
 private fun formatClock(time: LocalTime): String =
     time.format(DateTimeFormatter.ofPattern("HH:mm"))
+
+
+private data class MenuTarget(val chapterIndex: Int, val paragraphIndex: Int, val text: String)
+
+@Composable
+private fun ReaderTextMenu(
+    onDismiss: () -> Unit,
+    onGenerate: () -> Unit,
+    onCopy: () -> Unit,
+) {
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(Color.White)
+                .padding(vertical = 8.dp),
+        ) {
+            Text(
+                text = "生成视觉小说场景",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onGenerate)
+                    .padding(horizontal = 20.dp, vertical = 16.dp),
+                style = TextStyle(fontSize = 15.sp, color = Color(0xFF1F2024)),
+            )
+            Text(
+                text = "复制文本",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onCopy)
+                    .padding(horizontal = 20.dp, vertical = 16.dp),
+                style = TextStyle(fontSize = 15.sp, color = Color(0xFF1F2024)),
+            )
+        }
+    }
+}
