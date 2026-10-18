@@ -62,6 +62,9 @@ object ParserService {
 
     private val MULTI_BLANK_LINE = Regex("""\n{3,}""")
 
+    /** 超过这个长度的行视为「一章一整行」，按句再切。 */
+    private const val LONG_LINE_THRESHOLD = 300
+
     /** 私用区哨兵：绕开 Html.fromHtml 的空白折叠，保住段落换行。 */
     private const val PARA_TOKEN = "\uE000"
     private const val LINE_TOKEN = "\uE001"
@@ -93,21 +96,37 @@ object ParserService {
 
         var text = raw.replace("\r\n", "\n").replace('\r', '\n')
 
-        // 行尾空白（含全角空格）去掉，行首缩进保留给后续 trim 处理
-        text = text.lines().joinToString("\n") { it.trimEnd(' ', '\t', '\u3000') }
-        text = Regex("""\n{3,}""").replace(text, "\n\n")
+        // 完全没有任何换行的 TXT：按句强制切段（每 2 句一段）
+        if (!text.contains('\n')) {
+            return splitSentencesIntoParagraphs(text).trim()
+        }
 
-        if (!text.contains("\n\n")) {
-            text = if (text.contains('\n')) {
-                // 只有单换行：每一行当成一段
-                text.lines()
-                    .joinToString("\n\n") { it.trim() }
-                    .replace(Regex("""\n{3,}"""), "\n\n")
+        val lines = text.lines()
+            .map { it.trim().trim('\u00A0', '\u3000') }
+            .filter { it.isNotEmpty() }
+
+        if (lines.isEmpty()) return ""
+
+        // 每一行都当成一个独立段落：宁可多切，也绝不让段落粘连。
+        // 超长行（>300 字，常见于「一章一整行」的书）再按句每 2 句切一刀。
+        val paragraphs = mutableListOf<String>()
+        lines.forEach { line ->
+            if (line.length > LONG_LINE_THRESHOLD) {
+                paragraphs += splitLongLine(line)
             } else {
-                splitSentencesIntoParagraphs(text)
+                paragraphs += line
             }
         }
-        return text.trim()
+        return paragraphs.joinToString("\n\n").trim()
+    }
+
+    /** 超长行按句号切分，每 2 句合成一段。 */
+    private fun splitLongLine(line: String): List<String> {
+        val sentences = Regex("""(?<=[。！？…])""").split(line)
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+        if (sentences.size <= 1) return listOf(line)
+        return sentences.chunked(2).map { it.joinToString("") }
     }
 
     /** 全挤在一起时：按中文句末标点切句，每 2 句合成一段。 */

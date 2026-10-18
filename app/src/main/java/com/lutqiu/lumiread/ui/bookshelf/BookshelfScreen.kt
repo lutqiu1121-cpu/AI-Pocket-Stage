@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import com.lutqiu.lumiread.ui.components.PageHeader
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -176,40 +177,27 @@ fun BookshelfScreen(
         Column(
             modifier = modifier
                 .fillMaxSize()
-                .background(CanvasGray)
-                // 书架根布局必须避开系统状态栏，否则「书架」标题会被时间 / 电量压住
-                .statusBarsPadding()
-                .navigationBarsPadding()
-                .padding(horizontal = 20.dp),
+                .background(CanvasGray),
         ) {
-            Spacer(Modifier.height(28.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text(
-                    text = "书架",
-                    style = TextStyle(fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Ink),
-                )
-
-                ImportButton(
-                    importing = importing,
-                    onClick = {
-                        // OpenDocument 需要 mime 数组；系统文件选择器会自动过滤 txt / epub
-                        runCatching { picker.launch(PICKER_MIME) }
-                            .onFailure { message = "无法打开文件选择器：${it.message}" }
-                    },
-                )
-            }
-
-            Spacer(Modifier.height(14.dp))
+            // 统一 PageHeader：24dp 边距 / 28sp 加粗，右侧放导入按钮
+            PageHeader(
+                title = "书架",
+                action = {
+                    ImportButton(
+                        importing = importing,
+                        onClick = {
+                            runCatching { picker.launch(PICKER_MIME) }
+                                .onFailure { message = "无法打开文件选择器：${it.message}" }
+                        },
+                    )
+                },
+            )
 
             if (books.isNotEmpty() || importing) {
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp),
                 ) {
                     items(items = books, key = { it.id }) { book ->
                         val mode = modes[book.id] ?: ReadingMode.READER

@@ -129,6 +129,17 @@ class ParserServiceTest {
     }
 
     @Test
+    fun normalizeTxt_splitsMixedSingleAndDoubleNewlines() {
+        // 真机 bug 回归：既有空行、又有单换行的 TXT，旧实现只按空行切 → 段落粘连
+        val raw = "第一段。\n\n第二段开头。\n这里应该也是新的一段。\n还有这一段。"
+        val out = ParserService.normalizeTxt(raw)
+        val paragraphs = out.split("\n\n").filter { it.isNotBlank() }
+        assertEquals(4, paragraphs.size)
+        assertEquals("第一段。", paragraphs[0])
+        assertEquals("这里应该也是新的一段。", paragraphs[2])
+    }
+
+    @Test
     fun normalizeTxt_splitsWhenNoBlankLines() {
         // 只有单换行 → 每行一段
         val out = ParserService.normalizeTxt("第一行\n第二行\n第三行")
