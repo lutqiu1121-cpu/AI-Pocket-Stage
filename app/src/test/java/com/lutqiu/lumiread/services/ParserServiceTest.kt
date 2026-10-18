@@ -58,6 +58,15 @@ class ParserServiceTest {
     }
 
     @Test
+    fun stripMarkup_keepsParagraphBreaks() {
+        // v0.3.1 回归：块级标签必须变成 \n\n，不能被压成空格
+        val out = ParserService.stripMarkup("<p>第一段</p><p>第二段</p><div>第三段</div>")
+        assertTrue("必须保留段落双换行，实际: ${out.replace("\n", "\\n")}", out.contains("\n\n"))
+        val paragraphs = out.split("\n\n").map { it.trim() }.filter { it.isNotEmpty() }
+        assertEquals("应拆出 3 段", 3, paragraphs.size)
+    }
+
+    @Test
     fun stripMarkup_keepsEntitiesForHtmlLayer() {
         // 实体留给第三步 Html.fromHtml 解码，这里只要求标签被清掉、文本不丢
         val out = ParserService.stripMarkup("<p>A&amp;B&nbsp;C</p>")

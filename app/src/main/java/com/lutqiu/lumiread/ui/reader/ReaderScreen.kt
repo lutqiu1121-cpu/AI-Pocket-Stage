@@ -221,13 +221,35 @@ fun ReaderScreen(
             },
     ) {
         // ① 正文：整章一个竖向滚动容器
+        // top/bottom 动态避让：顶栏 52dp + 底栏 40dp 是浮层，展开时必须给正文让位，
+        // 否则首行会钻到顶栏下面（v0.3.1 修复）。
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
                 .verticalScroll(scrollState)
-                .padding(horizontal = 24.dp, vertical = 28.dp),
+                .padding(
+                    start = 24.dp,
+                    end = 24.dp,
+                    top = if (chromeVisible) 60.dp else 20.dp,
+                    bottom = if (chromeVisible) 48.dp else 24.dp,
+                ),
         ) {
+            // 章节标题：从正文剥离后在这里独立展示
+            chapter?.title?.takeIf { it.isNotBlank() }?.let { title ->
+                Text(
+                    text = title,
+                    style = TextStyle(
+                        color = palette.ink,
+                        fontSize = (fontSize + 6).sp,
+                        lineHeight = (fontSize + 16).sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.3.sp,
+                    ),
+                )
+                Spacer(Modifier.height(18.dp))
+            }
+
             Text(
                 text = chapter?.content.orEmpty(),
                 style = TextStyle(
@@ -239,6 +261,34 @@ fun ReaderScreen(
                     letterSpacing = 0.2.sp,
                 ),
             )
+
+            Spacer(Modifier.height(36.dp))
+
+            // ② 章末：无缝进入下一章
+            if (book.chapters.isNotEmpty() && chapterIndex < book.chapters.lastIndex) {
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "点击进入下一章  ›",
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(AccentBlue)
+                            .clickable { chapterIndex += 1 }
+                            .padding(horizontal = 22.dp, vertical = 12.dp),
+                        style = TextStyle(fontSize = 14.sp, color = Color.White, fontWeight = FontWeight.Medium),
+                    )
+                }
+            } else if (book.chapters.isNotEmpty()) {
+                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "— 全书完 —",
+                        style = TextStyle(fontSize = 12.sp, color = palette.ink.copy(alpha = 0.4f)),
+                    )
+                }
+            }
+
             Spacer(Modifier.height(40.dp))
         }
 

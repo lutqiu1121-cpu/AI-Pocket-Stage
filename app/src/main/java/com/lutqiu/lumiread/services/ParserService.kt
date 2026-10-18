@@ -22,7 +22,7 @@ object ParserService {
     private const val TAG = "ParserService"
 
     /** 解析器版本：改动切章逻辑时 +1，书架会据此自动重解析旧缓存。 */
-    const val PARSER_VERSION = 3
+    const val PARSER_VERSION = 4
 
     /** 章节标题正则（TXT 与 EPUB 兜底共用）：第 + 数字/中文数字 + 章|节|回。 */
     private val CHAPTER_HEADING = Regex("""第[0-9一二三四五六七八九十百千万]+[章|节|回]""")
@@ -61,6 +61,10 @@ object ParserService {
     private val HEADING_LINE_STRICT = Regex("""^第[0-9一二三四五六七八九十百千万]+[章|节|回].*""")
 
     private val MULTI_BLANK_LINE = Regex("""\n{3,}""")
+
+    /** 私用区哨兵：绕开 Html.fromHtml 的空白折叠，保住段落换行。 */
+    private const val PARA_TOKEN = "\uE000"
+    private const val LINE_TOKEN = "\uE001"
     private val INLINE_SPACE = Regex("""[ \t\u00A0\u3000]+""")
 
     // ── TXT ────────────────────────────────────────────────────────────────
@@ -280,7 +284,16 @@ object ParserService {
         if (rawHtml.isBlank()) return ""
 
         val html = stripMarkup(rawHtml)
-        val text = Html.fromHtml(html, Html.FROM_HTML_MODE_LEGACY).toString()
+
+        // Html.fromHtml 会把裸换行当普通空白折叠掉（这就是「段落全粘连」的根因），
+        // 所以先把 \n\n / \n 换成私用区哨兵，解析完再还原。
+        val protected = html
+            .replace("\n\n", PARA_TOKEN)
+            .replace("\n", LINE_TOKEN)
+
+        val text = Html.fromHtml(protected, Html.FROM_HTML_MODE_LEGACY).toString()
+            .replace(PARA_TOKEN, "\n\n")
+            .replace(LINE_TOKEN, "\n")
 
         var cleaned = text
         if (cleaned.contains('{') || cleaned.contains('<') || cleaned.contains('>')) {
@@ -315,9 +328,9 @@ object ParserService {
         text.replace('\u00A0', ' ')
             .replace("\r\n", "\n")
             .replace('\r', '\n')
-            .replace(INLINE_SPACE, " ")
+            // 逐行压空格再拼回，换行符原样保留
             .lines()
-            .joinToString("\n") { it.trim() }
+            .joinToString("\n") { line -> line.replace(INLINE_SPACE, " ").trim() }
             .replace(MULTI_BLANK_LINE, "\n\n")
             .trim()
 
