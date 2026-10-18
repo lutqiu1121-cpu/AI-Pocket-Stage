@@ -22,7 +22,7 @@ object ParserService {
     private const val TAG = "ParserService"
 
     /** 解析器版本：改动切章逻辑时 +1，书架会据此自动重解析旧缓存。 */
-    const val PARSER_VERSION = 4
+    const val PARSER_VERSION = 5
 
     /** 章节标题正则（TXT 与 EPUB 兜底共用）：第 + 数字/中文数字 + 章|节|回。 */
     private val CHAPTER_HEADING = Regex("""第[0-9一二三四五六七八九十百千万]+[章|节|回]""")
@@ -75,7 +75,49 @@ object ParserService {
         }.onFailure { Log.w(TAG, "打开 TXT 失败: $uri", it) }.getOrNull()
 
         if (bytes == null || bytes.isEmpty()) return@withContext emptyList()
-        splitTxt(decodeText(bytes))
+        splitTxt(normalizeTxt(decodeText(bytes)))
+    }
+
+    /**
+     * TXT 标准化（与 EPUB 输出对齐）：
+     * 1. `\r\n` / `\r` → `\n`；
+     * 2. 行尾空白清掉，连续 3+ 空行压成 1 个空行（即段落分隔 `\n\n`）；
+     * 3. 如果整本没有任何空行：
+     *    - 有单换行 → 每个换行视作段边界；
+     *    - 连单换行都没有（全挤成一整段）→ 按句号切句、每 2 句合成一段。
+     *
+     * 出口保证：段落之间统一是 `\n\n`，UI 层段距 / 首行缩进 / 两端对齐都能生效。
+     */
+    internal fun normalizeTxt(raw: String): String {
+        if (raw.isBlank()) return ""
+
+        var text = raw.replace("\r\n", "\n").replace('\r', '\n')
+
+        // 行尾空白（含全角空格）去掉，行首缩进保留给后续 trim 处理
+        text = text.lines().joinToString("\n") { it.trimEnd(' ', '\t', '\u3000') }
+        text = Regex("""\n{3,}""").replace(text, "\n\n")
+
+        if (!text.contains("\n\n")) {
+            text = if (text.contains('\n')) {
+                // 只有单换行：每一行当成一段
+                text.lines()
+                    .joinToString("\n\n") { it.trim() }
+                    .replace(Regex("""\n{3,}"""), "\n\n")
+            } else {
+                splitSentencesIntoParagraphs(text)
+            }
+        }
+        return text.trim()
+    }
+
+    /** 全挤在一起时：按中文句末标点切句，每 2 句合成一段。 */
+    private fun splitSentencesIntoParagraphs(text: String): String {
+        val sentences = Regex("""(?<=[。！？…])""").split(text)
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+        if (sentences.isEmpty()) return text
+        return sentences.chunked(2)
+            .joinToString("\n\n") { chunk -> chunk.joinToString("") }
     }
 
     /** 按章节正则切分纯文本；没有命中任何标题时整篇作为一章返回。 */

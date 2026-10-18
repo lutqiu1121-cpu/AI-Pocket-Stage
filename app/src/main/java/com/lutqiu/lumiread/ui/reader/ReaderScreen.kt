@@ -10,51 +10,42 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Tab
-import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -64,11 +55,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextIndent
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
@@ -76,11 +64,11 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.lutqiu.lumiread.data.Book
-import com.lutqiu.lumiread.data.BookFormat
-import com.lutqiu.lumiread.data.Chapter
+import com.lutqiu.lumiread.data.ReaderPrefs
+import com.lutqiu.lumiread.data.ReaderSettings
+import com.lutqiu.lumiread.data.ReaderTheme
 import com.lutqiu.lumiread.services.AiScene
 import com.lutqiu.lumiread.services.AiSceneService
-import com.lutqiu.lumiread.services.ApiConfigRepository
 import com.lutqiu.lumiread.services.HttpStatusException
 import com.lutqiu.lumiread.services.RequestQueue
 import kotlinx.coroutines.delay
@@ -89,23 +77,23 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 阅读器 v0.3.0
+// 阅读器 v0.3.2
 //
-// · 整章放进一个竖向滚动容器（无分页、无翻页），滚动位置即真实进度
-// · 点屏幕中心 60% 区域 → 弹出面板（Tab：目录 / 设置）
-// · 点四周边缘 → 顶/底栏显隐
-// · 长按正文 → ±2 句上下文 → 智谱分析 → Pollinations 生图 → VN 舞台
+// · LazyColumn 段落流：滑到当前章倒数第 2 段时静默追加下一章，无按钮、无断点
+// · 段间距由用户滑块控制（UI 层 verticalArrangement），解析层只保证 \n\n
+// · 点屏幕中心 → 黑色控制台（进度条 / 目录 / 界面 / 设置）
+// · 全部排版参数持久化到 SharedPreferences
 // ─────────────────────────────────────────────────────────────────────────────
 
-private enum class ReaderPalette(val label: String, val background: Color, val ink: Color) {
-    PAPER("白", Color(0xFFFFFFFF), Color(0xFF1F2024)),
-    SEPIA("米黄", Color(0xFFF5EFE6), Color(0xFF3A3226)),
-    NIGHT("深灰", Color(0xFF2B2B2B), Color(0xFFD9D9D9)),
-}
-
 private val DividerGray = Color(0xFFEEEEEE)
-private val SheetContainer = Color(0xFFF7F8FA)
 private val AccentBlue = Color(0xFF3B82F6)
+
+/** 列表里的一段正文。 */
+private data class ReaderItem(
+    val chapterIndex: Int,
+    val paragraphIndex: Int,
+    val text: String,
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -131,28 +119,74 @@ fun ReaderScreen(
         onDispose { controller?.show(WindowInsetsCompat.Type.systemBars()) }
     }
 
-    val lastIndex = (book.chapters.size - 1).coerceAtLeast(0)
-    var chapterIndex by rememberSaveable(book.id) {
-        mutableIntStateOf(initialChapterIndex.coerceIn(0, lastIndex))
+    // 排版参数：启动时从 SharedPreferences 读，改动即写回
+    var settings by remember { mutableStateOf(ReaderPrefs.load(context)) }
+    fun updateSettings(next: ReaderSettings) {
+        settings = next
+        ReaderPrefs.save(context, next)
     }
 
-    var chromeVisible by rememberSaveable { mutableStateOf(true) }
-    var sheetVisible by rememberSaveable { mutableStateOf(false) }
-    var sheetTab by rememberSaveable { mutableIntStateOf(0) }
+    val lastIndex = (book.chapters.size - 1).coerceAtLeast(0)
+    val startIndex = initialChapterIndex.coerceIn(0, lastIndex)
 
-    var paletteIndex by rememberSaveable { mutableIntStateOf(0) }
-    var fontSize by rememberSaveable { mutableStateOf(18f) }
-    var lineHeightMultiplier by rememberSaveable { mutableStateOf(1.6f) }
-    var aiEnabled by rememberSaveable { mutableStateOf(true) }
+    var chapterIndex by remember(book.id) { mutableIntStateOf(startIndex) }
+    // 已加载进列表的章节（从 chapterIndex 起连续），用于无感知追加
+    var loadedChapters by remember(book.id) { mutableStateOf(listOf(startIndex)) }
+    // 显式跳章时 +1，触发回到顶部；自动追加不会变
+    var jumpToken by remember { mutableIntStateOf(0) }
 
+    var chromeVisible by remember { mutableStateOf(true) }
+    var consoleVisible by remember { mutableStateOf(false) }
     var loadingText by remember { mutableStateOf<String?>(null) }
 
-    val palette = ReaderPalette.entries[paletteIndex]
-    val chapter: Chapter? = book.chapters.getOrNull(chapterIndex)
-    val scrollState = rememberScrollState()
+    val theme = ReaderTheme.entries[settings.theme.coerceIn(0, ReaderTheme.entries.lastIndex)]
+    val bg = Color(theme.background)
+    val ink = Color(theme.ink)
 
-    // 换章自动回到顶部
-    LaunchedEffect(chapterIndex) { scrollState.scrollTo(0) }
+    val listState = rememberLazyListState()
+
+    val items = remember(loadedChapters, book.id) {
+        loadedChapters.flatMap { ci ->
+            val chapter = book.chapters.getOrNull(ci)
+            if (chapter == null) {
+                emptyList()
+            } else {
+                paragraphsOf(chapter.content).mapIndexed { pi, text ->
+                    ReaderItem(chapterIndex = ci, paragraphIndex = pi, text = text)
+                }
+            }
+        }
+    }
+
+    // 显式跳章：回到列表顶部
+    LaunchedEffect(jumpToken) {
+        if (jumpToken > 0) listState.scrollToItem(0)
+    }
+
+    // 无感知续章：倒数第 2 段可见时追加下一章
+    LaunchedEffect(listState, items.size, loadedChapters) {
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
+            .collect { lastVisible ->
+                if (lastVisible >= items.size - 2) {
+                    val last = loadedChapters.lastOrNull() ?: return@collect
+                    if (last < book.chapters.lastIndex) {
+                        val next = last + 1
+                        loadedChapters = loadedChapters + next
+                        chapterIndex = next
+                    }
+                }
+            }
+    }
+
+    // 底栏：跟随当前可见段落所在章
+    val firstVisible = listState.firstVisibleItemIndex
+    val firstItem = items.getOrNull(firstVisible)
+    val visibleChapterIndex = firstItem?.chapterIndex ?: chapterIndex
+    val chapterItems = items.filter { it.chapterIndex == visibleChapterIndex }
+    val chapterStartIndex = items.indexOfFirst { it.chapterIndex == visibleChapterIndex }
+    val withinChapter = (firstVisible - chapterStartIndex).coerceAtLeast(0)
+    val percent = if (chapterItems.isEmpty()) 100
+    else ((withinChapter + 1) * 100 / chapterItems.size).coerceIn(0, 100)
 
     var nowText by remember { mutableStateOf(formatClock(LocalTime.now())) }
     LaunchedEffect(Unit) {
@@ -162,16 +196,17 @@ fun ReaderScreen(
         }
     }
 
-    // 真实进度：当前滚动位置 / 可滚动范围
-    val percent =
-        if (scrollState.maxValue <= 0) 100 else (scrollState.value * 100 / scrollState.maxValue).coerceIn(0, 100)
-    val scrollFraction =
-        if (scrollState.maxValue <= 0) 0f else scrollState.value.toFloat() / scrollState.maxValue
+    fun jumpTo(index: Int) {
+        val target = index.coerceIn(0, lastIndex)
+        chapterIndex = target
+        loadedChapters = listOf(target)
+        jumpToken += 1
+    }
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(palette.background)
+            .background(bg)
             .pointerInput(Unit) {
                 detectTapGestures(
                     onTap = { offset ->
@@ -180,19 +215,20 @@ fun ReaderScreen(
                         val isCenterClick = offset.x > width * 0.2f && offset.x < width * 0.8f &&
                             offset.y > height * 0.2f && offset.y < height * 0.8f
                         if (isCenterClick) {
-                            sheetVisible = true
+                            consoleVisible = true
                         } else {
                             chromeVisible = !chromeVisible
                         }
                     },
                     onLongPress = {
+                        val chapter = book.chapters.getOrNull(visibleChapterIndex)
                         val content = chapter?.content.orEmpty()
                         if (content.isBlank() || loadingText != null) return@detectTapGestures
-                        if (!aiEnabled) {
-                            Toast.makeText(context, "AI 智能分析已关闭（设置里可开启）", Toast.LENGTH_SHORT).show()
+                        if (!settings.aiEnabled) {
+                            Toast.makeText(context, "AI 智能分析已关闭（控制台里可开启）", Toast.LENGTH_SHORT).show()
                             return@detectTapGestures
                         }
-                        val snippet = extractContext(content, scrollFraction)
+                        val snippet = extractContext(content, 0.5f)
                         loadingText = "AI 构思场景…"
                         scope.launch {
                             try {
@@ -220,89 +256,71 @@ fun ReaderScreen(
                 )
             },
     ) {
-        // ① 正文：整章一个竖向滚动容器
-        // top/bottom 动态避让：顶栏 52dp + 底栏 40dp 是浮层，展开时必须给正文让位，
-        // 否则首行会钻到顶栏下面（v0.3.1 修复）。
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-                .verticalScroll(scrollState)
-                .padding(
-                    start = 24.dp,
-                    end = 24.dp,
-                    top = if (chromeVisible) 60.dp else 20.dp,
-                    bottom = if (chromeVisible) 48.dp else 24.dp,
-                ),
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = settings.marginDp.dp,
+                end = settings.marginDp.dp,
+                top = if (chromeVisible) 60.dp else 20.dp,
+                bottom = if (chromeVisible) 56.dp else 28.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(settings.paragraphSpacing.dp),
         ) {
-            // 章节标题：从正文剥离后在这里独立展示
-            chapter?.title?.takeIf { it.isNotBlank() }?.let { title ->
-                Text(
-                    text = title,
-                    style = TextStyle(
-                        color = palette.ink,
-                        fontSize = (fontSize + 6).sp,
-                        lineHeight = (fontSize + 16).sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.3.sp,
-                    ),
-                )
-                Spacer(Modifier.height(18.dp))
-            }
-
-            Text(
-                text = chapter?.content.orEmpty(),
-                style = TextStyle(
-                    color = palette.ink,
-                    fontSize = fontSize.sp,
-                    lineHeight = (fontSize * lineHeightMultiplier).sp,
-                    textIndent = TextIndent(firstLine = 2.em),
-                    textAlign = TextAlign.Justify,
-                    letterSpacing = 0.2.sp,
-                ),
-            )
-
-            Spacer(Modifier.height(36.dp))
-
-            // ② 章末：无缝进入下一章
-            if (book.chapters.isNotEmpty() && chapterIndex < book.chapters.lastIndex) {
-                Box(
-                    modifier = Modifier.fillMaxWidth(),
-                    contentAlignment = Alignment.Center,
-                ) {
+            itemsIndexed(
+                items = items,
+                key = { _, item -> "${item.chapterIndex}-${item.paragraphIndex}" },
+            ) { index, item ->
+                // 章首插入标题（该章第一条段落之前）
+                val isChapterStart = index == 0 || items[index - 1].chapterIndex != item.chapterIndex
+                Column {
+                    if (isChapterStart) {
+                        val title = book.chapters.getOrNull(item.chapterIndex)?.title.orEmpty()
+                        if (title.isNotBlank()) {
+                            Text(
+                                text = title,
+                                modifier = Modifier.padding(bottom = 6.dp),
+                                style = TextStyle(
+                                    color = ink,
+                                    fontSize = (settings.fontSize + 6).sp,
+                                    lineHeight = (settings.fontSize + 16).sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 0.3.sp,
+                                ),
+                            )
+                        }
+                    }
                     Text(
-                        text = "点击进入下一章  ›",
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(AccentBlue)
-                            .clickable { chapterIndex += 1 }
-                            .padding(horizontal = 22.dp, vertical = 12.dp),
-                        style = TextStyle(fontSize = 14.sp, color = Color.White, fontWeight = FontWeight.Medium),
-                    )
-                }
-            } else if (book.chapters.isNotEmpty()) {
-                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    Text(
-                        text = "— 全书完 —",
-                        style = TextStyle(fontSize = 12.sp, color = palette.ink.copy(alpha = 0.4f)),
+                        text = item.text,
+                        style = TextStyle(
+                            color = ink,
+                            fontSize = settings.fontSize.sp,
+                            lineHeight = (settings.fontSize * settings.lineHeight).sp,
+                            letterSpacing = settings.letterSpacing.sp,
+                            textIndent = if (settings.indentEnabled) TextIndent(firstLine = 2.em) else TextIndent.None,
+                            textAlign = TextAlign.Justify,
+                            fontWeight = when (settings.fontWeight) {
+                                0 -> FontWeight.Light
+                                2 -> FontWeight.Bold
+                                else -> FontWeight.Normal
+                            },
+                        ),
                     )
                 }
             }
-
-            Spacer(Modifier.height(40.dp))
         }
 
-        // ② 顶栏（只保留返回）
+        // 顶部：只保留返回
         AnimatedVisibility(
             visible = chromeVisible,
             modifier = Modifier.align(Alignment.TopCenter),
             enter = fadeIn() + slideInVertically { -it },
             exit = fadeOut() + slideOutVertically { -it },
         ) {
-            ReaderTopBar(palette = palette, onBack = onBack)
+            ReaderTopBar(background = bg, ink = ink, onBack = onBack)
         }
 
-        // ③ 底栏：时间 + 第N章 xx%
+        // 底部：时间 + 第N章 xx%
         AnimatedVisibility(
             visible = chromeVisible,
             modifier = Modifier.align(Alignment.BottomCenter),
@@ -310,14 +328,15 @@ fun ReaderScreen(
             exit = fadeOut() + slideOutVertically { it },
         ) {
             ReaderBottomBar(
-                palette = palette,
+                background = bg,
+                ink = ink,
                 time = nowText,
-                chapterLabel = "第${chapterIndex + 1}章",
+                chapterLabel = "第${visibleChapterIndex + 1}章",
                 percent = percent,
             )
         }
 
-        // ④ Loading 遮罩
+        // Loading 遮罩
         loadingText?.let { message ->
             Box(
                 modifier = Modifier
@@ -343,55 +362,25 @@ fun ReaderScreen(
         }
     }
 
-    // ⑤ 合并面板：目录 / 设置
-    if (sheetVisible) {
+    // 沉浸式控制台
+    if (consoleVisible) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         ModalBottomSheet(
-            onDismissRequest = { sheetVisible = false },
+            onDismissRequest = { consoleVisible = false },
             sheetState = sheetState,
-            containerColor = SheetContainer,
+            containerColor = ConsoleBg,
+            scrimColor = Color.Black.copy(alpha = 0.55f),
         ) {
-            Column(Modifier.fillMaxWidth()) {
-                PrimaryTabRow(
-                    selectedTabIndex = sheetTab,
-                    containerColor = SheetContainer,
-                    contentColor = AccentBlue,
-                ) {
-                    Tab(
-                        selected = sheetTab == 0,
-                        onClick = { sheetTab = 0 },
-                        text = { Text("目录", fontSize = 14.sp) },
-                    )
-                    Tab(
-                        selected = sheetTab == 1,
-                        onClick = { sheetTab = 1 },
-                        text = { Text("设置", fontSize = 14.sp) },
-                    )
-                }
-
-                if (sheetTab == 0) {
-                    TocList(
-                        chapters = book.chapters,
-                        currentIndex = chapterIndex,
-                        onSelect = {
-                            chapterIndex = it
-                            sheetVisible = false
-                        },
-                    )
-                } else {
-                    ReaderSettingsPane(
-                        context = context,
-                        paletteIndex = paletteIndex,
-                        onPaletteChange = { paletteIndex = it },
-                        fontSize = fontSize,
-                        onFontSizeChange = { fontSize = it },
-                        lineHeightMultiplier = lineHeightMultiplier,
-                        onLineHeightChange = { lineHeightMultiplier = it },
-                        aiEnabled = aiEnabled,
-                        onAiEnabledChange = { aiEnabled = it },
-                    )
-                }
-            }
+            ReaderConsole(
+                chapters = book.chapters,
+                currentChapter = visibleChapterIndex,
+                settings = settings,
+                onSettingsChange = { updateSettings(it) },
+                onJumpChapter = {
+                    jumpTo(it)
+                    consoleVisible = false
+                },
+            )
         }
     }
 }
@@ -404,62 +393,25 @@ private fun friendlyError(t: Throwable): String = when {
     else -> "AI 失败：${t.message ?: t.javaClass.simpleName}"
 }
 
-// ── 目录列表 ────────────────────────────────────────────────────────────────
-
-@Composable
-private fun TocList(
-    chapters: List<Chapter>,
-    currentIndex: Int,
-    onSelect: (Int) -> Unit,
-) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text("共 ${chapters.size} 章", style = TextStyle(fontSize = 12.sp, color = Color(0xFF9AA0A6)))
-        }
-        LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp)) {
-            itemsIndexed(items = chapters, key = { index, _ -> index }) { index, chapter ->
-                val current = index == currentIndex
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .clickable { onSelect(index) }
-                        .background(if (current) AccentBlue.copy(alpha = 0.10f) else Color.Transparent)
-                        .padding(horizontal = 12.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = (index + 1).toString(),
-                        style = TextStyle(fontSize = 11.sp, color = if (current) AccentBlue else Color(0xFFB0B4BA)),
-                        modifier = Modifier.width(32.dp),
-                    )
-                    Text(
-                        text = chapter.title,
-                        style = TextStyle(
-                            fontSize = 14.sp,
-                            fontWeight = if (current) FontWeight.SemiBold else FontWeight.Normal,
-                            color = if (current) AccentBlue else Color(0xFF3A3D42),
-                        ),
-                        maxLines = 1,
-                    )
-                }
-            }
-        }
-        Spacer(Modifier.height(16.dp))
+/** 段落切分：优先按 `\n\n`，没有双换行时按单换行兜底。 */
+internal fun paragraphsOf(content: String): List<String> {
+    if (content.isBlank()) return emptyList()
+    val split = if (content.contains("\n\n")) {
+        content.split(Regex("\\n{2,}"))
+    } else {
+        content.split('\n')
     }
+    return split.map { it.replace('\n', ' ').trim() }.filter { it.isNotEmpty() }
 }
 
 // ── 顶栏 / 底栏 ─────────────────────────────────────────────────────────────
 
 @Composable
-private fun ReaderTopBar(palette: ReaderPalette, onBack: () -> Unit) {
+private fun ReaderTopBar(background: Color, ink: Color, onBack: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(palette.background)
+            .background(background)
             .statusBarsPadding(),
     ) {
         Row(
@@ -473,9 +425,9 @@ private fun ReaderTopBar(palette: ReaderPalette, onBack: () -> Unit) {
                     .padding(horizontal = 10.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("‹", style = TextStyle(fontSize = 22.sp, color = palette.ink, fontWeight = FontWeight.Light))
+                Text("‹", style = TextStyle(fontSize = 22.sp, color = ink, fontWeight = FontWeight.Light))
                 Spacer(Modifier.width(4.dp))
-                Text("返回", style = TextStyle(fontSize = 14.sp, color = palette.ink))
+                Text("返回", style = TextStyle(fontSize = 14.sp, color = ink))
             }
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(DividerGray))
@@ -484,134 +436,22 @@ private fun ReaderTopBar(palette: ReaderPalette, onBack: () -> Unit) {
 
 @Composable
 private fun ReaderBottomBar(
-    palette: ReaderPalette,
+    background: Color,
+    ink: Color,
     time: String,
     chapterLabel: String,
     percent: Int,
 ) {
-    Column(Modifier.fillMaxWidth().background(palette.background)) {
+    Column(Modifier.fillMaxWidth().background(background)) {
         Box(Modifier.fillMaxWidth().height(1.dp).background(DividerGray))
         Row(
             modifier = Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 24.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text(time, style = TextStyle(fontSize = 11.sp, color = palette.ink.copy(alpha = 0.55f)))
-            Text("$chapterLabel $percent%", style = TextStyle(fontSize = 11.sp, color = palette.ink.copy(alpha = 0.55f)))
+            Text(time, style = TextStyle(fontSize = 11.sp, color = ink.copy(alpha = 0.55f)))
+            Text("$chapterLabel $percent%", style = TextStyle(fontSize = 11.sp, color = ink.copy(alpha = 0.55f)))
         }
-    }
-}
-
-// ── 设置面板 ────────────────────────────────────────────────────────────────
-
-@Composable
-private fun ReaderSettingsPane(
-    context: Context,
-    paletteIndex: Int,
-    onPaletteChange: (Int) -> Unit,
-    fontSize: Float,
-    onFontSizeChange: (Float) -> Unit,
-    lineHeightMultiplier: Float,
-    onLineHeightChange: (Float) -> Unit,
-    aiEnabled: Boolean,
-    onAiEnabledChange: (Boolean) -> Unit,
-) {
-    var apiKey by remember { mutableStateOf(ApiConfigRepository.getZhipuKey(context)) }
-    var saved by remember { mutableStateOf(false) }
-
-    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-        Spacer(Modifier.height(12.dp))
-
-        Text("背景色", style = TextStyle(fontSize = 13.sp, color = Color(0xFF6B7078)))
-        Spacer(Modifier.height(10.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            ReaderPalette.entries.forEachIndexed { index, entry ->
-                PaletteDot(entry, selected = index == paletteIndex, onClick = { onPaletteChange(index) })
-            }
-        }
-
-        Spacer(Modifier.height(18.dp))
-
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("字号", style = TextStyle(fontSize = 13.sp, color = Color(0xFF6B7078)))
-            Text("${fontSize.toInt()}sp", style = TextStyle(fontSize = 13.sp, color = AccentBlue))
-        }
-        Slider(value = fontSize, onValueChange = onFontSizeChange, valueRange = 14f..24f, steps = 9)
-
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("行间距", style = TextStyle(fontSize = 13.sp, color = Color(0xFF6B7078)))
-            Text(String.format("%.1f×", lineHeightMultiplier), style = TextStyle(fontSize = 13.sp, color = AccentBlue))
-        }
-        Slider(value = lineHeightMultiplier, onValueChange = onLineHeightChange, valueRange = 1.2f..2.2f, steps = 9)
-
-        Spacer(Modifier.height(8.dp))
-        Box(Modifier.fillMaxWidth().height(1.dp).background(DividerGray))
-        Spacer(Modifier.height(14.dp))
-
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    "AI 智能分析",
-                    style = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Color(0xFF1F2024)),
-                )
-                Text(
-                    "开启后将调用大模型提取人物与场景，消耗 Token",
-                    style = TextStyle(fontSize = 10.sp, color = Color(0xFF9AA0A6)),
-                )
-            }
-            Switch(checked = aiEnabled, onCheckedChange = onAiEnabledChange)
-        }
-
-        Spacer(Modifier.height(14.dp))
-
-        OutlinedTextField(
-            value = apiKey,
-            onValueChange = {
-                apiKey = it
-                saved = false
-            },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            label = { Text("智谱 API Key", fontSize = 12.sp) },
-            placeholder = { Text("粘贴 Key；填 MOCK 可离线验收", fontSize = 12.sp) },
-            visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-        )
-
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            TextButton(onClick = {
-                ApiConfigRepository.setZhipuKey(context, apiKey)
-                saved = true
-                Toast.makeText(context, "API Key 已保存", Toast.LENGTH_SHORT).show()
-            }) {
-                Text(if (saved) "已保存" else "保存", color = AccentBlue)
-            }
-        }
-
-        Spacer(Modifier.height(24.dp))
-    }
-}
-
-@Composable
-private fun PaletteDot(palette: ReaderPalette, selected: Boolean, onClick: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(
-            modifier = Modifier
-                .size(34.dp)
-                .clip(CircleShape)
-                .background(palette.background)
-                .border(1.dp, if (selected) AccentBlue else Color(0xFFE3E5E8), CircleShape)
-                .clickable(onClick = onClick),
-        ) {
-            if (selected) {
-                Box(Modifier.fillMaxSize().clip(CircleShape).background(AccentBlue.copy(alpha = 0.18f)))
-            }
-        }
-        Spacer(Modifier.height(6.dp))
-        Text(
-            palette.label,
-            style = TextStyle(fontSize = 10.sp, color = if (selected) AccentBlue else Color(0xFF9AA0A6)),
-        )
     }
 }
 
@@ -651,25 +491,3 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 
 private fun formatClock(time: LocalTime): String =
     time.format(DateTimeFormatter.ofPattern("HH:mm"))
-
-@Preview(name = "Reader", showBackground = true, widthDp = 400, heightDp = 800)
-@Composable
-private fun ReaderScreenPreview() {
-    ReaderScreen(
-        book = Book(
-            id = "preview",
-            title = "示例书",
-            format = BookFormat.TXT,
-            chapters = listOf(
-                Chapter(
-                    index = 0,
-                    title = "第一章 起点",
-                    content = "这是一段用于预览的正文。长按屏幕任意位置会触发 AI 分析，" +
-                        "点击屏幕中心会打开目录 / 设置面板。",
-                ),
-            ),
-        ),
-        onBack = {},
-        onOpenScene = {},
-    )
-}

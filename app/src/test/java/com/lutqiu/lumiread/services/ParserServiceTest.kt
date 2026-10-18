@@ -119,6 +119,33 @@ class ParserServiceTest {
     }
 
     @Test
+    fun normalizeTxt_unifiesLineBreaksAndParagraphs() {
+        // 1) CRLF / CR → LF；2) 连续空行压成 \n\n
+        val raw = "第一段。\r\n\r\n\r\n第二段。\r第三段。"
+        val out = ParserService.normalizeTxt(raw)
+        assertFalse("不应残留 \\r", out.contains('\r'))
+        assertTrue("应有段落分隔", out.contains("\n\n"))
+        assertTrue(out.contains("第二段。"))
+    }
+
+    @Test
+    fun normalizeTxt_splitsWhenNoBlankLines() {
+        // 只有单换行 → 每行一段
+        val out = ParserService.normalizeTxt("第一行\n第二行\n第三行")
+        assertEquals(3, out.split("\n\n").size)
+    }
+
+    @Test
+    fun normalizeTxt_splitsWhenNoLineBreaksAtAll() {
+        // 全挤成一整段 → 按句号切、每 2 句一段
+        val raw = "第一句。第二句。第三句。第四句。"
+        val out = ParserService.normalizeTxt(raw)
+        val paragraphs = out.split("\n\n")
+        assertEquals(2, paragraphs.size)
+        assertEquals("第一句。第二句。", paragraphs[0])
+    }
+
+    @Test
     fun splitTxt_splitsOnChapterHeadings() {
         val text = """
             前言一句话。
