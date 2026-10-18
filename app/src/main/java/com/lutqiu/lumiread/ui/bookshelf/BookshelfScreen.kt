@@ -63,6 +63,8 @@ private val CanvasGray = Color(0xFFF7F8FA)
 private val Ink = Color(0xFF1A1B1E)
 private val SubInk = Color(0xFF6B7078)
 private val Accent = Color(0xFF3B82F6)
+private val DeepBlue = Color(0xFF1E3A8A)
+private val DeepBlueBorder = Color(0xFFBFD3FF)
 
 /** SAF 里只用这两种 MIME 过滤：纯文本 + EPUB。 */
 private val PICKER_MIME = arrayOf("text/plain", "application/epub+zip")
@@ -215,10 +217,7 @@ fun BookshelfScreen(
                         BookRow(
                             book = book,
                             mode = mode,
-                            onToggleMode = {
-                                modes[book.id] =
-                                    if (mode == ReadingMode.READER) ReadingMode.VN else ReadingMode.READER
-                            },
+                            onSelectMode = { modes[book.id] = it },
                             onClick = { onOpenBook(book, mode) },
                         )
                     }
@@ -257,7 +256,7 @@ private fun ImportButton(importing: Boolean, onClick: () -> Unit) {
 private fun BookRow(
     book: Book,
     mode: ReadingMode,
-    onToggleMode: () -> Unit,
+    onSelectMode: (ReadingMode) -> Unit,
     onClick: () -> Unit,
 ) {
     Surface(
@@ -301,7 +300,7 @@ private fun BookRow(
                 )
             }
 
-            ModeChip(mode = mode, onClick = onToggleMode)
+            ModeChip(mode = mode, onSelect = onSelectMode)
 
             Spacer(Modifier.width(6.dp))
 
@@ -313,26 +312,47 @@ private fun BookRow(
     }
 }
 
-/** 「文本 / 剧场」模式切换胶囊：点一下切换进入方式，不影响「点卡片打开」。 */
+/**
+ * 「文本 / 剧场」切换 Chip（v0.4.0）：
+ * 选中态 = 深蓝底 + 白字 + 浅蓝外边框，极其明显；未选中为透明底灰字。
+ */
 @Composable
-private fun ModeChip(mode: ReadingMode, onClick: () -> Unit) {
-    val isReader = mode == ReadingMode.READER
-    val solid = if (isReader) Accent else Color(0xFF7C5CFF)
+private fun ModeChip(mode: ReadingMode, onSelect: (ReadingMode) -> Unit) {
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(50))
-            .background(solid)
-            .border(2.dp, solid.copy(alpha = 0.35f), RoundedCornerShape(50))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 7.dp),
+            .background(Color(0xFFF3F4F6))
+            .border(1.dp, Color(0xFFE2E5EA), RoundedCornerShape(50))
+            .padding(2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        ModeSegment("文本", selected = mode == ReadingMode.READER) { onSelect(ReadingMode.READER) }
+        ModeSegment("剧场", selected = mode == ReadingMode.VN) { onSelect(ReadingMode.VN) }
+    }
+}
+
+@Composable
+private fun ModeSegment(label: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(if (selected) DeepBlue else Color.Transparent)
+            .then(
+                if (selected) {
+                    Modifier.border(2.dp, DeepBlueBorder, RoundedCornerShape(50))
+                } else {
+                    Modifier
+                },
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 9.dp, vertical = 5.dp),
+    ) {
         Text(
-            text = if (isReader) "文本" else "剧场",
+            text = label,
             style = TextStyle(
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = Color.White,
+                fontSize = 10.sp,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                color = if (selected) Color.White else Color(0xFF8A9099),
             ),
         )
     }

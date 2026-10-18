@@ -3,12 +3,15 @@ package com.lutqiu.lumiread.ui.reader
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.util.Log
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -27,39 +30,54 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextIndent
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -67,7 +85,7 @@ import com.lutqiu.lumiread.data.Book
 import com.lutqiu.lumiread.data.ReaderPrefs
 import com.lutqiu.lumiread.data.ReaderSettings
 import com.lutqiu.lumiread.data.ReaderTheme
-import com.lutqiu.lumiread.services.AiScene
+import com.lutqiu.lumiread.data.VnLaunch
 import com.lutqiu.lumiread.services.AiSceneService
 import com.lutqiu.lumiread.services.HttpStatusException
 import com.lutqiu.lumiread.services.RequestQueue
@@ -77,16 +95,21 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 阅读器 v0.3.2
+// 阅读器 v0.4.0
 //
-// · LazyColumn 段落流：滑到当前章倒数第 2 段时静默追加下一章，无按钮、无断点
-// · 段间距由用户滑块控制（UI 层 verticalArrangement），解析层只保证 \n\n
-// · 点屏幕中心 → 黑色控制台（进度条 / 目录 / 界面 / 设置）
-// · 全部排版参数持久化到 SharedPreferences
+// · LazyColumn 段落流：滑到当前章倒数第 2 段时静默追加下一章
+// · 长按正文：该段文字淡蓝高亮 + 文字正上方白色气泡菜单（不再是居中 Dialog）
+// · 点屏幕中心 → 全屏悬浮纯白控制台（Box + 0.4 遮罩，不是 ModalBottomSheet）
+// · 滚动状态提升到 ReaderScrollViewModel，VN 往返逐像素回位
 // ─────────────────────────────────────────────────────────────────────────────
+
+private const val TAG = "ReaderScroll"
 
 private val DividerGray = Color(0xFFEEEEEE)
 private val AccentBlue = Color(0xFF3B82F6)
+
+/** 长按高亮色：Color(0xFF3B82F6).copy(alpha = 0.2f)。 */
+private val HighlightBlue = AccentBlue.copy(alpha = 0.2f)
 
 /** 列表里的一段正文。 */
 private data class ReaderItem(
@@ -95,18 +118,28 @@ private data class ReaderItem(
     val text: String,
 )
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** 长按命中的段落 + 手指按下的窗口坐标（气泡以此为锚点向上弹）。 */
+private data class MenuTarget(
+    val chapterIndex: Int,
+    val paragraphIndex: Int,
+    val text: String,
+    val press: Offset,
+)
+
 @Composable
 fun ReaderScreen(
     book: Book,
+    scroll: ReaderScrollViewModel,
     onBack: () -> Unit,
-    onOpenVn: (com.lutqiu.lumiread.data.VnLaunch) -> Unit,
+    onOpenVn: (VnLaunch) -> Unit,
     modifier: Modifier = Modifier,
     initialChapterIndex: Int = 0,
 ) {
     val context = LocalContext.current
     val view = LocalView.current
     val scope = rememberCoroutineScope()
+    val haptics = LocalHapticFeedback.current
+    val density = LocalDensity.current
     val clipboard = remember(context) {
         context.getSystemService(android.content.ClipboardManager::class.java)
     }
@@ -132,22 +165,22 @@ fun ReaderScreen(
     val lastIndex = (book.chapters.size - 1).coerceAtLeast(0)
     val startIndex = initialChapterIndex.coerceIn(0, lastIndex)
 
-    var chapterIndex by remember(book.id) { mutableIntStateOf(startIndex) }
-    // 已加载进列表的章节（从 chapterIndex 起连续），用于无感知追加
-    var loadedChapters by remember(book.id) { mutableStateOf(listOf(startIndex)) }
-    // 显式跳章时 +1，触发回到顶部；自动追加不会变
-    var jumpToken by remember { mutableIntStateOf(0) }
+    // 换书才重置；从 VN 回来时同一本书 → 状态原样保留
+    LaunchedEffect(book.id) { scroll.openBook(book.id, startIndex) }
+
+    val listState = scroll.listState
+    val loadedChapters = scroll.loadedChapters.ifEmpty { listOf(scroll.chapterIndex) }
 
     var chromeVisible by remember { mutableStateOf(true) }
     var consoleVisible by remember { mutableStateOf(false) }
     var loadingText by remember { mutableStateOf<String?>(null) }
     var menuTarget by remember { mutableStateOf<MenuTarget?>(null) }
+    /** 可见段落的根坐标，长按命中的就是手指下那一段。 */
+    val itemBounds = remember { mutableStateMapOf<String, Rect>() }
 
     val theme = ReaderTheme.entries[settings.theme.coerceIn(0, ReaderTheme.entries.lastIndex)]
     val bg = Color(theme.background)
     val ink = Color(theme.ink)
-
-    val listState = rememberLazyListState()
 
     val items = remember(loadedChapters, book.id) {
         loadedChapters.flatMap { ci ->
@@ -163,8 +196,8 @@ fun ReaderScreen(
     }
 
     // 显式跳章：回到列表顶部
-    LaunchedEffect(jumpToken) {
-        if (jumpToken > 0) listState.scrollToItem(0)
+    LaunchedEffect(scroll.jumpToken) {
+        if (scroll.jumpToken > 0) listState.scrollToItem(0)
     }
 
     // 无感知续章：倒数第 2 段可见时追加下一章
@@ -174,18 +207,53 @@ fun ReaderScreen(
                 if (lastVisible >= items.size - 2) {
                     val last = loadedChapters.lastOrNull() ?: return@collect
                     if (last < book.chapters.lastIndex) {
-                        val next = last + 1
-                        loadedChapters = loadedChapters + next
-                        chapterIndex = next
+                        scroll.appendChapter(last + 1)
                     }
                 }
             }
     }
 
+    // ── 滚动位置：记录 + 用于验收的日志 ─────────────────────────────────────
+    LaunchedEffect(Unit) {
+        Log.i(
+            TAG,
+            "[restore] book=${book.id} firstVisible=${listState.firstVisibleItemIndex} " +
+                "offset=${listState.firstVisibleItemScrollOffset} loaded=$loadedChapters",
+        )
+    }
+    LaunchedEffect(listState, items) {
+        snapshotFlow {
+            Triple(
+                listState.firstVisibleItemIndex,
+                listState.firstVisibleItemScrollOffset,
+                listState.layoutInfo.visibleItemsInfo.firstOrNull()?.key,
+            )
+        }.collect { (index, offset, key) ->
+            val item = items.getOrNull(index)
+            if (item != null) {
+                scroll.rememberAnchor(item.chapterIndex, item.paragraphIndex)
+                Log.i(
+                    TAG,
+                    "[save] index=$index offset=$offset chapter=${item.chapterIndex} " +
+                        "paragraph=${item.paragraphIndex} key=$key",
+                )
+            }
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            Log.i(
+                TAG,
+                "[leave] firstVisible=${listState.firstVisibleItemIndex} " +
+                    "offset=${listState.firstVisibleItemScrollOffset}",
+            )
+        }
+    }
+
     // 底栏：跟随当前可见段落所在章
     val firstVisible = listState.firstVisibleItemIndex
     val firstItem = items.getOrNull(firstVisible)
-    val visibleChapterIndex = firstItem?.chapterIndex ?: chapterIndex
+    val visibleChapterIndex = firstItem?.chapterIndex ?: scroll.chapterIndex
     val chapterItems = items.filter { it.chapterIndex == visibleChapterIndex }
     val chapterStartIndex = items.indexOfFirst { it.chapterIndex == visibleChapterIndex }
     val withinChapter = (firstVisible - chapterStartIndex).coerceAtLeast(0)
@@ -213,7 +281,7 @@ fun ReaderScreen(
                 }
                 loadingText = null
                 onOpenVn(
-                    com.lutqiu.lumiread.data.VnLaunch(
+                    VnLaunch(
                         book = book,
                         chapterIndex = target.chapterIndex,
                         paragraphIndex = target.paragraphIndex,
@@ -229,11 +297,13 @@ fun ReaderScreen(
     }
 
     fun jumpTo(index: Int) {
-        val target = index.coerceIn(0, lastIndex)
-        chapterIndex = target
-        loadedChapters = listOf(target)
-        jumpToken += 1
+        scroll.jumpTo(index.coerceIn(0, lastIndex))
     }
+
+    // pointerInput(Unit) 不会随重组重启，命中逻辑必须读最新 items
+    val currentItems by rememberUpdatedState(items)
+
+    BackHandler(enabled = consoleVisible) { consoleVisible = false }
 
     Box(
         modifier = modifier
@@ -252,10 +322,24 @@ fun ReaderScreen(
                             chromeVisible = !chromeVisible
                         }
                     },
-                    onLongPress = {
-                        val item = items.getOrNull(firstVisible)
-                        if (item != null) {
-                            menuTarget = MenuTarget(item.chapterIndex, item.paragraphIndex, item.text)
+                    onLongPress = { offset ->
+                        // 命中手指下那一段（只对当前组合出来的可见段落做矩形命中）
+                        val hit = itemBounds.entries
+                            .firstOrNull { (_, rect) -> rect.contains(offset) }
+                        if (hit != null) {
+                            val item = currentItems.firstOrNull {
+                                boundKey(it.chapterIndex, it.paragraphIndex) == hit.key
+                            }
+                            if (item != null) {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                scroll.rememberAnchor(item.chapterIndex, item.paragraphIndex)
+                                menuTarget = MenuTarget(
+                                    chapterIndex = item.chapterIndex,
+                                    paragraphIndex = item.paragraphIndex,
+                                    text = item.text,
+                                    press = offset,
+                                )
+                            }
                         }
                     },
                 )
@@ -274,11 +358,21 @@ fun ReaderScreen(
         ) {
             itemsIndexed(
                 items = items,
-                key = { _, item -> "${item.chapterIndex}-${item.paragraphIndex}" },
+                key = { _, item -> boundKey(item.chapterIndex, item.paragraphIndex) },
             ) { index, item ->
-                // 章首插入标题（该章第一条段落之前）
                 val isChapterStart = index == 0 || items[index - 1].chapterIndex != item.chapterIndex
-                Column {
+                val selected = menuTarget?.let {
+                    it.chapterIndex == item.chapterIndex && it.paragraphIndex == item.paragraphIndex
+                } == true
+                val key = boundKey(item.chapterIndex, item.paragraphIndex)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onGloballyPositioned { itemBounds[key] = it.boundsInRoot() },
+                ) {
+                    DisposableEffect(key) {
+                        onDispose { itemBounds.remove(key) }
+                    }
                     if (isChapterStart) {
                         val title = book.chapters.getOrNull(item.chapterIndex)?.title.orEmpty()
                         if (title.isNotBlank()) {
@@ -295,8 +389,17 @@ fun ReaderScreen(
                             )
                         }
                     }
+                    val body: AnnotatedString = if (selected) {
+                        buildAnnotatedString {
+                            withStyle(SpanStyle(background = HighlightBlue)) {
+                                append(item.text)
+                            }
+                        }
+                    } else {
+                        AnnotatedString(item.text)
+                    }
                     Text(
-                        text = item.text,
+                        text = body,
                         style = TextStyle(
                             color = ink,
                             fontSize = settings.fontSize.sp,
@@ -365,48 +468,52 @@ fun ReaderScreen(
                 }
             }
         }
-    }
 
-    // 长按菜单（纯白 Dialog）
-    menuTarget?.let { target ->
-        ReaderTextMenu(
-            onDismiss = { menuTarget = null },
-            onGenerate = {
-                menuTarget = null
-                startGenerate(target)
+        // 全屏悬浮纯白控制台（不再是 ModalBottomSheet）
+        ReaderConsoleOverlay(
+            visible = consoleVisible,
+            chapters = book.chapters,
+            currentChapter = visibleChapterIndex,
+            settings = settings,
+            onSettingsChange = { updateSettings(it) },
+            onJumpChapter = {
+                jumpTo(it)
+                consoleVisible = false
             },
-            onCopy = {
-                clipboard?.setPrimaryClip(
-                    android.content.ClipData.newPlainText("lumiread", target.text),
-                )
-                menuTarget = null
-                Toast.makeText(context, "已复制本段", Toast.LENGTH_SHORT).show()
-            },
+            onDismiss = { consoleVisible = false },
         )
     }
 
-    // 沉浸式控制台
-    if (consoleVisible) {
-        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        ModalBottomSheet(
-            onDismissRequest = { consoleVisible = false },
-            sheetState = sheetState,
-            containerColor = ConsoleBg,
-            scrimColor = Color.Black.copy(alpha = 0.55f),
+    // 长按气泡菜单：白色小气泡，锚在手指 / 高亮文字正上方
+    menuTarget?.let { target ->
+        val marginPx = with(density) { 10.dp.roundToPx() }
+        Popup(
+            popupPositionProvider = BubbleAboveProvider(target.press, marginPx),
+            onDismissRequest = { menuTarget = null },
+            properties = PopupProperties(
+                focusable = true,
+                dismissOnClickOutside = true,
+                dismissOnBackPress = true,
+            ),
         ) {
-            ReaderConsole(
-                chapters = book.chapters,
-                currentChapter = visibleChapterIndex,
-                settings = settings,
-                onSettingsChange = { updateSettings(it) },
-                onJumpChapter = {
-                    jumpTo(it)
-                    consoleVisible = false
+            TextBubbleMenu(
+                onGenerate = {
+                    menuTarget = null
+                    startGenerate(target)
+                },
+                onCopy = {
+                    clipboard?.setPrimaryClip(
+                        android.content.ClipData.newPlainText("lumiread", target.text),
+                    )
+                    menuTarget = null
+                    Toast.makeText(context, "已复制本段", Toast.LENGTH_SHORT).show()
                 },
             )
         }
     }
 }
+
+private fun boundKey(chapter: Int, paragraph: Int) = "$chapter-$paragraph"
 
 private fun friendlyError(t: Throwable): String = when {
     t is HttpStatusException && t.code == 401 -> "智谱鉴权失败（401）：请检查 API Key"
@@ -425,6 +532,74 @@ internal fun paragraphsOf(content: String): List<String> {
         content.split('\n')
     }
     return split.map { it.replace('\n', ' ').trim() }.filter { it.isNotEmpty() }
+}
+
+// ── 气泡菜单 ────────────────────────────────────────────────────────────────
+
+/** 把气泡放在手指（高亮文字）正上方；顶部空间不够时翻到下方，并夹在窗口内。 */
+private class BubbleAboveProvider(
+    private val point: Offset,
+    private val marginPx: Int,
+) : PopupPositionProvider {
+    override fun calculatePosition(
+        anchorBounds: IntRect,
+        windowSize: IntSize,
+        layoutDirection: LayoutDirection,
+        popupContentSize: IntSize,
+    ): IntOffset {
+        var x = point.x.toInt() - popupContentSize.width / 2
+        var y = point.y.toInt() - popupContentSize.height - marginPx
+        if (y < marginPx) y = point.y.toInt() + marginPx
+        val maxX = (windowSize.width - popupContentSize.width - marginPx).coerceAtLeast(marginPx)
+        val maxY = (windowSize.height - popupContentSize.height - marginPx).coerceAtLeast(marginPx)
+        x = x.coerceIn(marginPx, maxX)
+        y = y.coerceIn(marginPx, maxY)
+        return IntOffset(x, y)
+    }
+}
+
+@Composable
+private fun TextBubbleMenu(onGenerate: () -> Unit, onCopy: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = Color.White,
+            shadowElevation = 10.dp,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                BubbleAction(text = "生成视觉小说场景", onClick = onGenerate)
+                Box(
+                    Modifier
+                        .width(1.dp)
+                        .height(18.dp)
+                        .background(Color(0xFFEDEEF0)),
+                )
+                BubbleAction(text = "复制文本", onClick = onCopy)
+            }
+        }
+        // 指向高亮文字的小三角
+        Canvas(modifier = Modifier.size(width = 14.dp, height = 7.dp)) {
+            val p = Path().apply {
+                moveTo(0f, 0f)
+                lineTo(size.width, 0f)
+                lineTo(size.width / 2f, size.height)
+                close()
+            }
+            drawPath(p, Color.White)
+        }
+    }
+}
+
+@Composable
+private fun BubbleAction(text: String, onClick: () -> Unit) {
+    Text(
+        text = text,
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 11.dp),
+        style = TextStyle(fontSize = 13.sp, color = Color(0xFF1F2024), fontWeight = FontWeight.Medium),
+    )
 }
 
 // ── 顶栏 / 底栏 ─────────────────────────────────────────────────────────────
@@ -514,40 +689,3 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 
 private fun formatClock(time: LocalTime): String =
     time.format(DateTimeFormatter.ofPattern("HH:mm"))
-
-
-private data class MenuTarget(val chapterIndex: Int, val paragraphIndex: Int, val text: String)
-
-@Composable
-private fun ReaderTextMenu(
-    onDismiss: () -> Unit,
-    onGenerate: () -> Unit,
-    onCopy: () -> Unit,
-) {
-    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
-                .background(Color.White)
-                .padding(vertical = 8.dp),
-        ) {
-            Text(
-                text = "生成视觉小说场景",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onGenerate)
-                    .padding(horizontal = 20.dp, vertical = 16.dp),
-                style = TextStyle(fontSize = 15.sp, color = Color(0xFF1F2024)),
-            )
-            Text(
-                text = "复制文本",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onCopy)
-                    .padding(horizontal = 20.dp, vertical = 16.dp),
-                style = TextStyle(fontSize = 15.sp, color = Color(0xFF1F2024)),
-            )
-        }
-    }
-}

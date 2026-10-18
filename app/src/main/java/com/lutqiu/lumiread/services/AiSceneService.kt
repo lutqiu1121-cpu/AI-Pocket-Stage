@@ -42,7 +42,7 @@ object AiSceneService {
 
     private const val TAG = "AiSceneService"
 
-    private const val ZHIPU_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+    private val ZHIPU_URL = ApiConfig.ZHIPU_BASE_URL.trimEnd('/') + "/chat/completions"
     private const val POLLINATIONS_URL = "https://image.pollinations.ai/prompt/"
 
     private const val READ_TIMEOUT_S = 60L
@@ -80,13 +80,14 @@ object AiSceneService {
                 imagePath = null,
             )
         }
-        if (key.isBlank()) {
-            throw HttpStatusException(401, "请先在设置里填写智谱 API Key")
+        if (key.isBlank() || key == "请填入真实Key") {
+            throw HttpStatusException(401, "请先在 ApiConfig.kt 填入真实智谱 API Key")
         }
 
         val userPrompt = "以下是小说上下文，请判断并给出场景：\n$contextText"
         val body = buildString {
-            append("""{"model":"glm-4-flash","temperature":0.7,"messages":[""")
+            append("""{"model":""").append(jsonString(ApiConfig.ZHIPU_MODEL))
+                .append(""","temperature":0.7,"messages":[""")
             append("""{"role":"system","content":""").append(jsonString(SYSTEM_PROMPT)).append("},")
             append("""{"role":"user","content":""").append(jsonString(userPrompt)).append("}")
             append("]}")
@@ -127,7 +128,8 @@ object AiSceneService {
         }
 
         val encoded = URLEncoder.encode(prompt, "UTF-8")
-        val url = "$POLLINATIONS_URL$encoded?width=1024&height=576&seed=$seed&nologo=true&model=flux"
+        // v0.4.0：VN 画面按 1:1 出图，卡片区再 Crop，保证构图居中不拉伸。
+        val url = "$POLLINATIONS_URL$encoded?width=1024&height=1024&seed=$seed&nologo=true&model=flux"
 
         val request = Request.Builder().url(url).get().build()
         val bytes = client.newCall(request).execute().use { response ->

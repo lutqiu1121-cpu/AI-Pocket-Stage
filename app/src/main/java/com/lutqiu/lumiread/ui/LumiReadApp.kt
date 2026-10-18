@@ -28,16 +28,20 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStoreOwner
 import com.lutqiu.lumiread.data.Book
 import com.lutqiu.lumiread.data.ReadingMode
 import com.lutqiu.lumiread.data.VnLaunch
 import com.lutqiu.lumiread.ui.bookshelf.BookshelfScreen
 import com.lutqiu.lumiread.ui.reader.ReaderScreen
+import com.lutqiu.lumiread.ui.reader.ReaderScrollViewModel
 import com.lutqiu.lumiread.ui.settings.GlobalSettingsScreen
 import com.lutqiu.lumiread.ui.stage.StageScreen
 import com.lutqiu.lumiread.ui.wiki.WikiScreen
@@ -57,6 +61,12 @@ fun LumiReadApp() {
     var opened by remember { mutableStateOf<OpenedBook?>(null) }
     var vn by remember { mutableStateOf<VnLaunch?>(null) }
 
+    // 阅读进度挂在 Activity 级 ViewModel：VN 往返后复用同一个 LazyListState
+    val owner = LocalContext.current.findActivity() as? ViewModelStoreOwner
+    val readerScroll = remember(owner) {
+        owner?.let { ViewModelProvider(it)[ReaderScrollViewModel::class.java] } ?: ReaderScrollViewModel()
+    }
+
     val current = opened
     if (current != null) {
         BackHandler { opened = null }
@@ -71,6 +81,7 @@ fun LumiReadApp() {
         when (current.mode) {
             ReadingMode.READER -> ReaderScreen(
                 book = current.book,
+                scroll = readerScroll,
                 onBack = { opened = null },
                 onOpenVn = { vn = it },
             )
@@ -134,7 +145,10 @@ fun LumiReadApp() {
                 .padding(innerPadding),
         ) {
             when (tab) {
-                0 -> BookshelfScreen(onOpenBook = { book, mode -> opened = OpenedBook(book, mode) })
+                0 -> BookshelfScreen(onOpenBook = { book, mode ->
+                    readerScroll.openBook(book.id, 0)
+                    opened = OpenedBook(book, mode)
+                })
                 1 -> WikiScreen()
                 else -> GlobalSettingsScreen()
             }
