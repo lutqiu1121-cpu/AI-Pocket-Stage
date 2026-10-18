@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Lu 书本 Logo 的自适应图标底色：纯白 -->
+    <color name="ic_launcher_background">#FFFFFFFF</color>
+</resources>

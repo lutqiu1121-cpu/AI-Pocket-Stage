@@ -5,6 +5,8 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Log
+import com.lutqiu.lumiread.BuildConfig
+import java.io.File
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -79,7 +81,41 @@ fun BookshelfScreen(
 
     // 恢复上次导入的书架；旧解析器切出来的 EPUB 自动按新逻辑重解析（修复历史缓存里的目录页/乱码）
     LaunchedEffect(Unit) {
-        val loaded = BookStore.load(context)
+        var loaded = BookStore.load(context)
+
+        // Debug 通道：adb push 到私有目录后用 run-as 放进 filesDir/debug_import.txt，
+        // 启动即自动解析，绕开虚拟屏无法打开 SAF 文件选择器的问题。
+        if (BuildConfig.DEBUG) {
+            val debugFile = listOf("debug_import.txt", "debug_import.epub")
+                .map { File(context.filesDir, it) }
+                .firstOrNull { it.exists() }
+            if (debugFile != null) {
+                val id = "debug://${debugFile.name}"
+                if (loaded.none { it.id == id }) {
+                    val isEpub = debugFile.extension.equals("epub", true)
+                    val chapters = runCatching {
+                        if (isEpub) {
+                            ParserService.parseEpub(context, Uri.fromFile(debugFile))
+                        } else {
+                            ParserService.parseTxt(context, Uri.fromFile(debugFile))
+                        }
+                    }.getOrDefault(emptyList())
+                    if (chapters.isNotEmpty()) {
+                        loaded = loaded + Book(
+                            id = id,
+                            title = debugFile.nameWithoutExtension,
+                            format = if (isEpub) BookFormat.EPUB else BookFormat.TXT,
+                            importedAt = System.currentTimeMillis(),
+                            parsedWith = ParserService.PARSER_VERSION,
+                            chapters = chapters,
+                        )
+                        BookStore.save(context, loaded)
+                    }
+                }
+                debugFile.delete()
+            }
+        }
+
         books = loaded
 
         val stale = loaded.filter {
@@ -153,16 +189,10 @@ fun BookshelfScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Column {
-                    Text(
-                        text = "书架",
-                        style = TextStyle(fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Ink),
-                    )
-                    Text(
-                        text = "支持 TXT / EPUB",
-                        style = TextStyle(fontSize = 12.sp, color = SubInk),
-                    )
-                }
+                Text(
+                    text = "书架",
+                    style = TextStyle(fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Ink),
+                )
 
                 ImportButton(
                     importing = importing,
@@ -176,17 +206,7 @@ fun BookshelfScreen(
 
             Spacer(Modifier.height(14.dp))
 
-            message?.let {
-                Text(
-                    text = it,
-                    style = TextStyle(fontSize = 12.sp, color = SubInk),
-                    modifier = Modifier.padding(vertical = 6.dp),
-                )
-            }
-
-            if (books.isEmpty() && !importing) {
-                EmptyState()
-            } else {
+            if (books.isNotEmpty() || importing) {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -231,23 +251,6 @@ private fun ImportButton(importing: Boolean, onClick: () -> Unit) {
             text = if (importing) "解析中…" else "导入书籍",
             style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color.White),
         )
-    }
-}
-
-@Composable
-private fun EmptyState() {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                text = "书架还是空的",
-                style = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Medium, color = Ink),
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = "点右上角「导入书籍」，选一本 TXT 或 EPUB",
-                style = TextStyle(fontSize = 12.sp, color = SubInk),
-            )
-        }
     }
 }
 

@@ -21,11 +21,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,6 +43,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
 import com.lutqiu.lumiread.data.Chapter
 import com.lutqiu.lumiread.data.ReaderSettings
 import com.lutqiu.lumiread.data.ReaderTheme
@@ -123,6 +126,7 @@ fun ReaderConsole(
                 currentChapter = currentChapter,
                 onPrev = { if (currentChapter > 0) onJumpChapter(currentChapter - 1) },
                 onNext = { if (currentChapter < chapters.lastIndex) onJumpChapter(currentChapter + 1) },
+                onJumpChapter = onJumpChapter,
                 onOpen = { page = it },
             )
 
@@ -150,6 +154,7 @@ private fun ConsoleHome(
     currentChapter: Int,
     onPrev: () -> Unit,
     onNext: () -> Unit,
+    onJumpChapter: (Int) -> Unit,
     onOpen: (Int) -> Unit,
 ) {
     val progress = if (totalChapters <= 1) 1f else (currentChapter + 1).toFloat() / totalChapters
@@ -162,6 +167,10 @@ private fun ConsoleHome(
         )
         Spacer(Modifier.height(12.dp))
 
+        var draft by remember(currentChapter, totalChapters) {
+            mutableFloatStateOf(currentChapter.toFloat())
+        }
+
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = "上一章",
@@ -172,16 +181,28 @@ private fun ConsoleHome(
                     .padding(horizontal = 10.dp, vertical = 6.dp),
                 style = TextStyle(color = ConsoleSubInk, fontSize = 12.sp),
             )
-            LinearProgressIndicator(
-                progress = { progress },
-                modifier = Modifier
-                    .weight(1f)
-                    .height(4.dp)
-                    .padding(horizontal = 10.dp)
-                    .clip(CircleShape),
-                color = ConsoleAccent,
-                trackColor = ConsoleSubInk.copy(alpha = 0.25f),
-            )
+            if (totalChapters > 1) {
+                // 可拖拽进度条：松手后按比例跳章（onValueChangeFinished）
+                Slider(
+                    value = draft.coerceIn(0f, (totalChapters - 1).toFloat()),
+                    onValueChange = { draft = it },
+                    onValueChangeFinished = { onJumpChapter(draft.roundToInt()) },
+                    valueRange = 0f..(totalChapters - 1).toFloat(),
+                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                    colors = SliderDefaults.colors(
+                        thumbColor = ConsoleAccent,
+                        activeTrackColor = ConsoleAccent,
+                        inactiveTrackColor = ConsoleSubInk.copy(alpha = 0.25f),
+                    ),
+                )
+            } else {
+                LinearProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier.weight(1f).height(4.dp).padding(horizontal = 10.dp).clip(CircleShape),
+                    color = ConsoleAccent,
+                    trackColor = ConsoleSubInk.copy(alpha = 0.25f),
+                )
+            }
             Text(
                 text = "下一章",
                 modifier = Modifier
@@ -522,27 +543,10 @@ private fun ConsoleSettings(
 
         Spacer(Modifier.height(14.dp))
 
-        OutlinedTextField(
-            value = apiKey,
-            onValueChange = {
-                apiKey = it
-                saved = false
-            },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            label = { Text("智谱 API Key", fontSize = 12.sp, color = ConsoleSubInk) },
-            placeholder = { Text("粘贴 Key；填 MOCK 可离线验收", fontSize = 12.sp, color = ConsoleSubInk) },
-            visualTransformation = PasswordVisualTransformation(),
+        Text(
+            "智谱 API Key 已移到「设置」页（全局导航第三个 Tab）",
+            style = TextStyle(color = ConsoleSubInk, fontSize = 11.sp),
         )
-
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            TextButton(onClick = {
-                ApiConfigRepository.setZhipuKey(context, apiKey)
-                saved = true
-            }) {
-                Text(if (saved) "已保存" else "保存", color = ConsoleAccent)
-            }
-        }
         Spacer(Modifier.height(20.dp))
     }
 }
