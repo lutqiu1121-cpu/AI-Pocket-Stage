@@ -119,8 +119,9 @@ fun BookshelfScreen(
 
         books = loaded
 
+        // 任何被旧解析器切过的书（TXT / EPUB 都算）都重新解析一遍
         val stale = loaded.filter {
-            it.format == BookFormat.EPUB && it.parsedWith < ParserService.PARSER_VERSION
+            it.parsedWith < ParserService.PARSER_VERSION && !it.id.startsWith("debug://")
         }
         if (stale.isEmpty()) return@LaunchedEffect
 
@@ -128,10 +129,19 @@ fun BookshelfScreen(
         var updated = loaded
         stale.forEach { oldBook ->
             val uri = runCatching { Uri.parse(oldBook.id) }.getOrNull() ?: return@forEach
-            val chapters = runCatching { ParserService.parseEpub(context, uri) }.getOrDefault(emptyList())
+            val chapters = runCatching {
+                if (oldBook.format == BookFormat.EPUB) {
+                    ParserService.parseEpub(context, uri)
+                } else {
+                    ParserService.parseTxt(context, uri)
+                }
+            }.getOrDefault(emptyList())
             if (chapters.isNotEmpty()) {
-                val title = runCatching { ParserService.readEpubTitle(context, uri) }.getOrNull()
-                    ?: oldBook.title
+                val title = if (oldBook.format == BookFormat.EPUB) {
+                    runCatching { ParserService.readEpubTitle(context, uri) }.getOrNull() ?: oldBook.title
+                } else {
+                    oldBook.title
+                }
                 updated = updated.map {
                     if (it.id == oldBook.id) {
                         it.copy(title = title, chapters = chapters, parsedWith = ParserService.PARSER_VERSION)

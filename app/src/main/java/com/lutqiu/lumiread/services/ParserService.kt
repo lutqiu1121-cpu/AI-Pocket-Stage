@@ -22,7 +22,7 @@ object ParserService {
     private const val TAG = "ParserService"
 
     /** 解析器版本：改动切章逻辑时 +1，书架会据此自动重解析旧缓存。 */
-    const val PARSER_VERSION = 5
+    const val PARSER_VERSION = 6
 
     /** 章节标题正则（TXT 与 EPUB 兜底共用）：第 + 数字/中文数字 + 章|节|回。 */
     private val CHAPTER_HEADING = Regex("""第[0-9一二三四五六七八九十百千万]+[章|节|回]""")
