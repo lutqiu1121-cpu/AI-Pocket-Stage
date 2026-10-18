@@ -5,11 +5,12 @@ import com.lutqiu.lumiread.data.ApiConfig
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Shader
 import android.util.Log
+import androidx.compose.ui.graphics.toArgb
+import com.lutqiu.lumiread.ui.theme.LumiColors
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -213,7 +214,7 @@ object AiSceneService {
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             shader = LinearGradient(
                 0f, 0f, width.toFloat(), height.toFloat(),
-                intArrayOf(Color.parseColor("#1B1C1F"), Color.parseColor("#3B82F6")),
+                intArrayOf(LumiColors.MockGradientStart.toArgb(), LumiColors.MockGradientEnd.toArgb()),
                 null,
                 Shader.TileMode.CLAMP,
             )
@@ -221,7 +222,7 @@ object AiSceneService {
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
 
         val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.WHITE
+            color = LumiColors.White.toArgb()
             textSize = 56f
         }
         canvas.drawText("MOCK SCENE", 64f, height - 96f, textPaint)

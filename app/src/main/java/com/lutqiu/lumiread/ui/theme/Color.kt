@@ -78,6 +78,10 @@ object LumiColors {
     // ── 场景占位（浅色玻璃，不允许黑块）──────────────────────────────────
     val PlaceholderTint = Color(0xFFE8ECF2)
     val PlaceholderTintDark = Color(0xFF26282D)
+
+    // ── Mock 生图渐变（离线验收用）─────────────────────────────────────
+    val MockGradientStart = Color(0xFF1B1C1F)
+    val MockGradientEnd = Blue
 }
 
 // ── 全局 App 主题 ─────────────────────────────────────────────────────────
