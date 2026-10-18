@@ -1,22 +1,34 @@
 package com.lutqiu.lumiread.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
-import com.lutqiu.lumiread.data.ReaderTheme
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 
 /**
- * 全局 App 主题入口（颜色全部来自 [AppLightScheme] / [AppDarkScheme]）。
- *
- * 这里只做「跟随系统」的兜底；真正的用户选择由 [LumiReadApp] 读取 DataStore 后重新 provide。
+ * 6 维主题里的「UI 圆润度」：所有按钮 / 卡片 / 对话框 / 面板统一读取。
  */
+val LocalCornerRadius = compositionLocalOf { 16.dp }
+
+/**
+ * 6 维主题里的「玻璃质感开关」：关闭后所有 LiquidGlassPanel 退化为纯色面板。
+ */
+val LocalGlassEnabled = compositionLocalOf { true }
+
+/** 统一圆角工具：scale 用于胶囊/小控件微调。 */
 @Composable
-fun LumiTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    content: @Composable () -> Unit,
-) {
+fun lumiShape(scale: Float = 1f): RoundedCornerShape {
+    val base = LocalCornerRadius.current.value * scale
+    return RoundedCornerShape(base.coerceIn(0f, 32f).dp)
+}
+
+/** 全局 App 主题的兜底入口（真正的 6 维配置由 LumiReadApp 从 DataStore 注入）。 */
+@Composable
+fun LumiTheme(content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = if (darkTheme) AppDarkScheme else AppLightScheme,
+        colorScheme = appScheme(LumiColors.Canvas, LumiColors.Blue),
         content = content,
     )
 }
@@ -26,8 +38,9 @@ fun LumiTheme(
  */
 @Composable
 fun LumiReaderTheme(
-    theme: ReaderTheme,
+    background: Color,
+    accent: Color,
     content: @Composable () -> Unit,
 ) {
-    MaterialTheme(colorScheme = readerScheme(theme), content = content)
+    MaterialTheme(colorScheme = readerScheme(background, accent), content = content)
 }

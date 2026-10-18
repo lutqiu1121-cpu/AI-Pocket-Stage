@@ -13,44 +13,74 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.lutqiu.lumiread.data.AppThemeMode
-import com.lutqiu.lumiread.data.ReaderTheme
+import com.lutqiu.lumiread.data.ReaderPagingMode
+import com.lutqiu.lumiread.data.ReaderPrefs
+import com.lutqiu.lumiread.data.ReaderSettings
 import com.lutqiu.lumiread.data.ThemeConfig
 import com.lutqiu.lumiread.data.ApiConfig
 import com.lutqiu.lumiread.services.ApiConfigRepository
+import com.lutqiu.lumiread.ui.components.ColorPickerDialog
 import com.lutqiu.lumiread.ui.components.PageHeader
+import com.lutqiu.lumiread.ui.theme.LumiColorTokens
+import com.lutqiu.lumiread.ui.theme.lumiShape
+
+private enum class ColorTarget(val title: String) {
+    UI_BACKGROUND("UI 全局背景色"),
+    UI_ACCENT("UI 重点色"),
+    READER_BACKGROUND("阅读器背景色"),
+    READER_ACCENT("阅读器重点色"),
+}
 
 /**
- * 全局设置（v0.4.0）。
+ * 全局设置（v0.4.2）。
  *
- * - 外观：全局 App 主题（DataStore 持久化），颜色全部走 MaterialTheme；
- * - 阅读器主题：独立配置，互不干扰；
- * - AI：Key 已移入 [ApiConfig] 硬编码，只做只读状态展示。
+ * 6 维主题：圆润度 / 玻璃开关 / UI 背景 / UI 重点色 / 阅读背景 / 阅读重点色。
+ * 每个维度独立持久化，互不覆盖；颜色支持 HEX 输入。
  */
 @Composable
 fun GlobalSettingsScreen(
     theme: ThemeConfig,
-    onAppThemeChange: (AppThemeMode) -> Unit,
-    onReaderThemeChange: (ReaderTheme) -> Unit,
+    onThemeChange: (ThemeConfig) -> Unit,
 ) {
     val context = LocalContext.current
     val scheme = MaterialTheme.colorScheme
+
+    var readerSettings by remember { mutableStateOf(ReaderPrefs.load(context)) }
+    fun updateReaderSettings(next: ReaderSettings) {
+        readerSettings = next
+        ReaderPrefs.save(context, next)
+    }
+
+    var picking by remember { mutableStateOf<ColorTarget?>(null) }
+    var radiusDraft by remember { mutableFloatStateOf(theme.cornerRadiusDp.toFloat()) }
+    LaunchedEffect(theme.cornerRadiusDp) { radiusDraft = theme.cornerRadiusDp.toFloat() }
     val key = ApiConfigRepository.getZhipuKey(context)
     val configured = key.isNotBlank() && key != "请填入真实Key"
 
@@ -65,39 +95,100 @@ fun GlobalSettingsScreen(
         Column(Modifier.padding(horizontal = 24.dp)) {
             Spacer(Modifier.height(12.dp))
 
-            SectionTitle("外观 · 全局主题")
+            SectionTitle("外观 · 6 维主题")
+            Spacer(Modifier.height(12.dp))
+
+            // 1. UI 圆润度
+            SettingCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "UI 圆润度",
+                        style = TextStyle(fontSize = 13.sp, color = scheme.onSurface),
+                        modifier = Modifier.padding(end = 12.dp),
+                    )
+                    Slider(
+                        value = radiusDraft,
+                        onValueChange = {
+                            radiusDraft = it
+                            onThemeChange(
+                                theme.copy(
+                                    cornerRadiusDp = it.toInt()
+                                        .coerceIn(LumiColorTokens.MIN_RADIUS, LumiColorTokens.MAX_RADIUS),
+                                ),
+                            )
+                        },
+                        valueRange = LumiColorTokens.MIN_RADIUS.toFloat()..LumiColorTokens.MAX_RADIUS.toFloat(),
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = "${theme.cornerRadiusDp}dp",
+                        style = TextStyle(fontSize = 11.sp, color = scheme.primary),
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
+                }
+
+                // 2. 玻璃质感开关
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("玻璃质感", style = TextStyle(fontSize = 13.sp, color = scheme.onSurface))
+                        Text(
+                            "关闭后所有液态玻璃面板退化为纯色",
+                            style = TextStyle(fontSize = 10.sp, color = scheme.onSurfaceVariant),
+                        )
+                    }
+                    Switch(
+                        checked = theme.glassEnabled,
+                        onCheckedChange = { onThemeChange(theme.copy(glassEnabled = it)) },
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+
+            // 3-6. 四色配置
+            SettingCard {
+                ColorRow(
+                    label = ColorTarget.UI_BACKGROUND.title,
+                    argb = theme.uiBackground,
+                    onClick = { picking = ColorTarget.UI_BACKGROUND },
+                )
+                ColorRow(
+                    label = ColorTarget.UI_ACCENT.title,
+                    argb = theme.uiAccent,
+                    onClick = { picking = ColorTarget.UI_ACCENT },
+                )
+                ColorRow(
+                    label = ColorTarget.READER_BACKGROUND.title,
+                    argb = theme.readerBackground,
+                    onClick = { picking = ColorTarget.READER_BACKGROUND },
+                )
+                ColorRow(
+                    label = ColorTarget.READER_ACCENT.title,
+                    argb = theme.readerAccent,
+                    onClick = { picking = ColorTarget.READER_ACCENT },
+                )
+            }
+
+            Spacer(Modifier.height(22.dp))
+
+            SectionTitle("阅读模式")
             Spacer(Modifier.height(10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                AppThemeMode.entries.forEach { mode ->
-                    ThemeChip(
+                ReaderPagingMode.entries.forEach { mode ->
+                    ModeChip(
                         label = mode.label,
-                        selected = theme.appTheme == mode,
-                        onClick = { onAppThemeChange(mode) },
+                        selected = readerSettings.pagingMode == mode,
+                        onClick = { updateReaderSettings(readerSettings.copy(pagingMode = mode)) },
                     )
                 }
             }
             Spacer(Modifier.height(8.dp))
             Text(
-                text = "全局主题只影响书架 / 资料库 / 设置与底部导航，阅读器主题独立设置。",
-                style = TextStyle(fontSize = 11.sp, color = scheme.onSurfaceVariant, lineHeight = 17.sp),
-            )
-
-            Spacer(Modifier.height(20.dp))
-
-            SectionTitle("阅读器主题 · 独立")
-            Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ReaderTheme.entries.forEach { readerTheme ->
-                    ThemeChip(
-                        label = readerTheme.label,
-                        selected = theme.readerTheme == readerTheme,
-                        onClick = { onReaderThemeChange(readerTheme) },
-                    )
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = "阅读页、控制台与 VN 剧场使用这套配色，与全局深浅色互不影响。",
+                text = if (readerSettings.pagingMode == ReaderPagingMode.SCROLL) {
+                    "滚动模式：竖向上下滑动，实时更新进度。"
+                } else {
+                    "无动画模式：点屏幕左侧 40% 上一页、右侧 40% 下一页，瞬间切换；中间 20% 呼出控制台。"
+                },
                 style = TextStyle(fontSize = 11.sp, color = scheme.onSurfaceVariant, lineHeight = 17.sp),
             )
 
@@ -105,7 +196,7 @@ fun GlobalSettingsScreen(
 
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
+                shape = lumiShape(),
                 color = scheme.surface,
                 border = BorderStroke(1.dp, scheme.outlineVariant),
             ) {
@@ -115,12 +206,14 @@ fun GlobalSettingsScreen(
                         style = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = scheme.onSurface),
                     )
                     Spacer(Modifier.height(10.dp))
-                    SettingLine(label = "模型", value = ApiConfig.ZHIPU_MODEL, valueColor = scheme.onSurfaceVariant)
-                    Spacer(Modifier.height(6.dp))
-                    SettingLine(
-                        label = "API Key",
-                        value = if (configured) "已内置配置" else "未填写 · 请在 ApiConfig.kt 中填入",
-                        valueColor = if (configured) scheme.primary else scheme.error,
+                    Text(
+                        text = "模型：${ApiConfig.ZHIPU_MODEL}",
+                        style = TextStyle(fontSize = 12.sp, color = scheme.onSurfaceVariant),
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = if (configured) "API Key：已内置配置" else "API Key：未填写（ApiConfig.kt）",
+                        style = TextStyle(fontSize = 12.sp, color = if (configured) scheme.primary else scheme.error),
                     )
                 }
             }
@@ -131,9 +224,82 @@ fun GlobalSettingsScreen(
                 style = TextStyle(fontSize = 11.sp, color = scheme.onSurfaceVariant, lineHeight = 18.sp),
             )
 
-            // 给液态玻璃底部导航留出安全高度
             Spacer(Modifier.height(110.dp))
         }
+    }
+
+    // 颜色选择器
+    picking?.let { target ->
+        val initial = when (target) {
+            ColorTarget.UI_BACKGROUND -> Color(theme.uiBackground)
+            ColorTarget.UI_ACCENT -> Color(theme.uiAccent)
+            ColorTarget.READER_BACKGROUND -> Color(theme.readerBackground)
+            ColorTarget.READER_ACCENT -> Color(theme.readerAccent)
+        }
+        ColorPickerDialog(
+            title = target.title,
+            initial = initial,
+            onDismiss = { picking = null },
+            onConfirm = { color ->
+                val argb = 0xFF000000L or (color.toArgb().toLong() and 0xFFFFFFFFL)
+                val next = when (target) {
+                    ColorTarget.UI_BACKGROUND -> theme.copy(uiBackground = argb)
+                    ColorTarget.UI_ACCENT -> theme.copy(uiAccent = argb)
+                    ColorTarget.READER_BACKGROUND -> theme.copy(readerBackground = argb)
+                    ColorTarget.READER_ACCENT -> theme.copy(readerAccent = argb)
+                }
+                onThemeChange(next)
+                picking = null
+            },
+        )
+    }
+}
+
+@Composable
+private fun SettingCard(content: @Composable () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = lumiShape(),
+        color = scheme.surface,
+        border = BorderStroke(1.dp, scheme.outlineVariant),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            content()
+        }
+    }
+}
+
+@Composable
+private fun ColorRow(label: String, argb: Long, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(lumiShape(0.7f))
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .background(Color(argb))
+                .border(1.dp, scheme.outline, CircleShape),
+        )
+        Text(
+            text = label,
+            style = TextStyle(fontSize = 13.sp, color = scheme.onSurface),
+            modifier = Modifier.weight(1f).padding(start = 12.dp),
+        )
+        Text(
+            text = String.format("#%06X", 0xFFFFFF and argb.toInt()),
+            style = TextStyle(fontSize = 11.sp, color = scheme.onSurfaceVariant),
+        )
     }
 }
 
@@ -150,17 +316,14 @@ private fun SectionTitle(text: String) {
 }
 
 @Composable
-private fun ThemeChip(label: String, selected: Boolean, onClick: () -> Unit) {
+private fun ModeChip(label: String, selected: Boolean, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(50))
+            .clip(lumiShape())
             .background(if (selected) scheme.primary else scheme.surfaceVariant)
-            .then(
-                if (selected) Modifier.border(1.dp, scheme.primary, RoundedCornerShape(50)) else Modifier,
-            )
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
+            .padding(horizontal = 16.dp, vertical = 9.dp),
     ) {
         Text(
             text = label,
@@ -170,20 +333,5 @@ private fun ThemeChip(label: String, selected: Boolean, onClick: () -> Unit) {
                 color = if (selected) scheme.onPrimary else scheme.onSurfaceVariant,
             ),
         )
-    }
-}
-
-@Composable
-private fun SettingLine(label: String, value: String, valueColor: Color) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = label,
-            style = TextStyle(fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant),
-            modifier = Modifier.padding(end = 16.dp),
-        )
-        Text(text = value, style = TextStyle(fontSize = 12.sp, color = valueColor))
     }
 }

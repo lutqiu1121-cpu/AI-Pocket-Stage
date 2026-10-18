@@ -4,13 +4,14 @@ import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
-import com.lutqiu.lumiread.data.ReaderTheme
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 
 /**
  * 全项目唯一允许出现颜色字面量的地方。
  *
  * 其他任何 Composable / Modifier 都不允许写 `Color(0x...)`、`Color.White`、`Color.Black`：
- * 要么走 `MaterialTheme.colorScheme.*`（跟随双层主题自动切换），要么引用本文件的语义 token。
+ * 要么走 `MaterialTheme.colorScheme.*`，要么引用本文件的语义 token。
  */
 object LumiColors {
     // ── 品牌 ────────────────────────────────────────────────────────────
@@ -20,7 +21,7 @@ object LumiColors {
     val BlueTint = Color(0xFFDCE8FF)
     val Highlight = Blue.copy(alpha = 0.2f)
 
-    // ── 中性（浅色）────────────────────────────────────────────────────
+    // ── 中性 ────────────────────────────────────────────────────────────
     val Ink = Color(0xFF1A1B1E)
     val InkSoft = Color(0xFF6B7078)
     val InkFaint = Color(0xFF9AA0A6)
@@ -31,7 +32,7 @@ object LumiColors {
     val CanvasWarm = Color(0xFFFDFDFC)
     val White = Color(0xFFFFFFFF)
 
-    // ── 中性（深色）────────────────────────────────────────────────────
+    // ── 深色中性 ────────────────────────────────────────────────────────
     val NightCanvas = Color(0xFF101114)
     val NightSurface = Color(0xFF1B1C1F)
     val NightSurfaceHigh = Color(0xFF24262B)
@@ -56,26 +57,8 @@ object LumiColors {
     val GlassBorderDark = White.copy(alpha = 0.22f)
     val GlassBorderDarkSoft = White.copy(alpha = 0.10f)
     val GlassEdgeShadow = Black.copy(alpha = 0.12f)
-    val GlassSpecular = White.copy(alpha = 0.55f)
 
-    // ── 阅读器纸张 ──────────────────────────────────────────────────────
-    val Paper = White
-    val PaperInk = Color(0xFF1F2024)
-    val PaperHairline = Color(0xFFEEEEEE)
-    val Sepia = Color(0xFFF5EFE6)
-    val SepiaInk = Color(0xFF3A3226)
-    val SepiaHairline = Color(0xFFE3D8C6)
-    val EyeGreen = Color(0xFFE8F3E8)
-    val EyeGreenInk = Color(0xFF2A3A2A)
-    val EyeGreenHairline = Color(0xFFCFE3CF)
-    val GrayPaper = Color(0xFF2B2B2B)
-    val GrayPaperInk = Color(0xFFD9D9D9)
-    val GrayPaperHairline = Color(0xFF3C3C3C)
-    val PureBlack = Black
-    val PureBlackInk = Color(0xFFBFBFBF)
-    val PureBlackHairline = Color(0xFF2A2A2A)
-
-    // ── 场景占位（浅色玻璃，不允许黑块）──────────────────────────────────
+    // ── 场景占位 ────────────────────────────────────────────────────────
     val PlaceholderTint = Color(0xFFE8ECF2)
     val PlaceholderTintDark = Color(0xFF26282D)
 
@@ -84,126 +67,134 @@ object LumiColors {
     val MockGradientEnd = Blue
 }
 
-// ── 全局 App 主题 ─────────────────────────────────────────────────────────
+/**
+ * 6 维主题的默认值 / 边界值（ARGB Long）。
+ *
+ * 只有本文件能定义颜色字面量；DataStore 配置与 Color Picker 都以这些常量作为默认。
+ */
+object LumiColorTokens {
+    const val UI_BACKGROUND = 0xFFF7F8FA
+    const val UI_ACCENT = 0xFF3B82F6
+    const val READER_BACKGROUND = 0xFFFFFFFF
+    const val READER_ACCENT = 0xFF3B82F6
+    const val MIN_RADIUS = 0
+    const val MAX_RADIUS = 24
+}
 
-val AppLightScheme: ColorScheme = lightColorScheme(
-    primary = LumiColors.Blue,
-    onPrimary = LumiColors.White,
-    primaryContainer = LumiColors.BlueTint,
-    onPrimaryContainer = LumiColors.BlueDeep,
-    secondary = LumiColors.BlueDeep,
-    onSecondary = LumiColors.White,
-    secondaryContainer = LumiColors.BlueSoft,
-    onSecondaryContainer = LumiColors.BlueDeep,
-    tertiary = LumiColors.Blue,
-    onTertiary = LumiColors.White,
-    background = LumiColors.Canvas,
-    onBackground = LumiColors.Ink,
-    surface = LumiColors.White,
-    onSurface = LumiColors.Ink,
-    surfaceVariant = LumiColors.SurfaceMuted,
-    onSurfaceVariant = LumiColors.InkSoft,
-    outline = LumiColors.Hairline,
-    outlineVariant = LumiColors.HairlineSoft,
-    error = LumiColors.Warning,
-    onError = LumiColors.White,
-    scrim = LumiColors.Black,
-)
+/** 前景色：根据底色亮度自动选深/浅文字。 */
+fun onColor(background: Color): Color =
+    if (background.luminance() > 0.55f) LumiColors.Ink else LumiColors.White
 
-val AppDarkScheme: ColorScheme = darkColorScheme(
-    primary = LumiColors.Blue,
-    onPrimary = LumiColors.White,
-    primaryContainer = LumiColors.BlueDeep,
-    onPrimaryContainer = LumiColors.BlueSoft,
-    secondary = LumiColors.BlueSoft,
-    onSecondary = LumiColors.NightCanvas,
-    secondaryContainer = LumiColors.BlueDeep,
-    onSecondaryContainer = LumiColors.BlueSoft,
-    tertiary = LumiColors.Blue,
-    onTertiary = LumiColors.White,
-    background = LumiColors.NightCanvas,
-    onBackground = LumiColors.NightInk,
-    surface = LumiColors.NightSurface,
-    onSurface = LumiColors.NightInk,
-    surfaceVariant = LumiColors.NightSurfaceHigh,
-    onSurfaceVariant = LumiColors.NightInkSoft,
-    outline = LumiColors.NightHairline,
-    outlineVariant = LumiColors.NightHairline,
-    error = LumiColors.Warning,
-    onError = LumiColors.White,
-    scrim = LumiColors.Black,
-)
+/**
+ * 全局 App 配色：由「UI 背景色 + 重点色」两个独立维度推导。
+ * 不使用系统深色模式开关，避免与自定义背景色互相覆盖。
+ */
+fun appScheme(background: Color, accent: Color): ColorScheme {
+    val dark = background.luminance() < 0.4f
+    val ink = if (dark) LumiColors.NightInk else LumiColors.Ink
+    val surface = lerp(background, LumiColors.White, if (dark) 0.08f else 0.72f)
+    val surfaceVariant = lerp(background, if (dark) LumiColors.White else LumiColors.Black, if (dark) 0.14f else 0.06f)
+    val onAccent = onColor(accent)
 
-// ── 阅读器独立主题 ────────────────────────────────────────────────────────
+    return if (dark) {
+        darkColorScheme(
+            primary = accent,
+            onPrimary = onAccent,
+            primaryContainer = lerp(background, accent, 0.28f),
+            onPrimaryContainer = onAccent,
+            secondary = accent,
+            onSecondary = onAccent,
+            secondaryContainer = surfaceVariant,
+            onSecondaryContainer = ink,
+            tertiary = accent,
+            onTertiary = onAccent,
+            background = background,
+            onBackground = ink,
+            surface = surface,
+            onSurface = ink,
+            surfaceVariant = surfaceVariant,
+            onSurfaceVariant = ink.copy(alpha = 0.68f),
+            outline = ink.copy(alpha = 0.18f),
+            outlineVariant = ink.copy(alpha = 0.10f),
+            error = LumiColors.Warning,
+            onError = LumiColors.White,
+            scrim = LumiColors.Black,
+        )
+    } else {
+        lightColorScheme(
+            primary = accent,
+            onPrimary = onAccent,
+            primaryContainer = lerp(background, accent, 0.18f),
+            onPrimaryContainer = onColor(lerp(background, accent, 0.18f)),
+            secondary = accent,
+            onSecondary = onAccent,
+            secondaryContainer = surfaceVariant,
+            onSecondaryContainer = ink,
+            tertiary = accent,
+            onTertiary = onAccent,
+            background = background,
+            onBackground = ink,
+            surface = surface,
+            onSurface = ink,
+            surfaceVariant = surfaceVariant,
+            onSurfaceVariant = ink.copy(alpha = 0.64f),
+            outline = ink.copy(alpha = 0.16f),
+            outlineVariant = ink.copy(alpha = 0.10f),
+            error = LumiColors.Warning,
+            onError = LumiColors.White,
+            scrim = LumiColors.Black,
+        )
+    }
+}
 
-fun readerScheme(theme: ReaderTheme): ColorScheme = when (theme) {
-    ReaderTheme.PAPER -> lightColorScheme(
-        primary = LumiColors.Blue,
-        onPrimary = LumiColors.White,
-        background = LumiColors.Paper,
-        onBackground = LumiColors.PaperInk,
-        surface = LumiColors.Paper,
-        onSurface = LumiColors.PaperInk,
-        surfaceVariant = LumiColors.SurfaceMuted,
-        onSurfaceVariant = LumiColors.InkSoft,
-        outline = LumiColors.PaperHairline,
-        outlineVariant = LumiColors.PaperHairline,
-        scrim = LumiColors.Black,
-    )
+/**
+ * 阅读器独立配色：由「阅读背景色 + 阅读重点色」推导，与全局 App 配色互不干扰。
+ */
+fun readerScheme(background: Color, accent: Color): ColorScheme {
+    val dark = background.luminance() < 0.4f
+    val ink = if (dark) LumiColors.NightInk else LumiColors.Ink
+    val onAccent = onColor(accent)
+    val surfaceVariant = lerp(background, if (dark) LumiColors.White else LumiColors.Black, if (dark) 0.12f else 0.05f)
 
-    ReaderTheme.SEPIA -> lightColorScheme(
-        primary = LumiColors.Blue,
-        onPrimary = LumiColors.White,
-        background = LumiColors.Sepia,
-        onBackground = LumiColors.SepiaInk,
-        surface = LumiColors.Sepia,
-        onSurface = LumiColors.SepiaInk,
-        surfaceVariant = LumiColors.SepiaHairline,
-        onSurfaceVariant = LumiColors.SepiaInk.copy(alpha = 0.7f),
-        outline = LumiColors.SepiaHairline,
-        outlineVariant = LumiColors.SepiaHairline,
-        scrim = LumiColors.Black,
-    )
-
-    ReaderTheme.EYE_GREEN -> lightColorScheme(
-        primary = LumiColors.Blue,
-        onPrimary = LumiColors.White,
-        background = LumiColors.EyeGreen,
-        onBackground = LumiColors.EyeGreenInk,
-        surface = LumiColors.EyeGreen,
-        onSurface = LumiColors.EyeGreenInk,
-        surfaceVariant = LumiColors.EyeGreenHairline,
-        onSurfaceVariant = LumiColors.EyeGreenInk.copy(alpha = 0.72f),
-        outline = LumiColors.EyeGreenHairline,
-        outlineVariant = LumiColors.EyeGreenHairline,
-        scrim = LumiColors.Black,
-    )
-
-    ReaderTheme.DARK_GRAY -> darkColorScheme(
-        primary = LumiColors.Blue,
-        onPrimary = LumiColors.White,
-        background = LumiColors.GrayPaper,
-        onBackground = LumiColors.GrayPaperInk,
-        surface = LumiColors.GrayPaper,
-        onSurface = LumiColors.GrayPaperInk,
-        surfaceVariant = LumiColors.GrayPaperHairline,
-        onSurfaceVariant = LumiColors.GrayPaperInk.copy(alpha = 0.72f),
-        outline = LumiColors.GrayPaperHairline,
-        outlineVariant = LumiColors.GrayPaperHairline,
-        scrim = LumiColors.Black,
-    )
-
-    ReaderTheme.PURE_BLACK -> darkColorScheme(
-        primary = LumiColors.Blue,
-        onPrimary = LumiColors.White,
-        background = LumiColors.PureBlack,
-        onBackground = LumiColors.PureBlackInk,
-        surface = LumiColors.PureBlack,
-        onSurface = LumiColors.PureBlackInk,
-        surfaceVariant = LumiColors.PureBlackHairline,
-        onSurfaceVariant = LumiColors.PureBlackInk.copy(alpha = 0.72f),
-        outline = LumiColors.PureBlackHairline,
-        outlineVariant = LumiColors.PureBlackHairline,
-        scrim = LumiColors.Black,
-    )
+    return if (dark) {
+        darkColorScheme(
+            primary = accent,
+            onPrimary = onAccent,
+            primaryContainer = lerp(background, accent, 0.28f),
+            onPrimaryContainer = onAccent,
+            secondary = accent,
+            onSecondary = onAccent,
+            background = background,
+            onBackground = ink,
+            surface = background,
+            onSurface = ink,
+            surfaceVariant = surfaceVariant,
+            onSurfaceVariant = ink.copy(alpha = 0.66f),
+            outline = ink.copy(alpha = 0.18f),
+            outlineVariant = ink.copy(alpha = 0.10f),
+            error = LumiColors.Warning,
+            onError = LumiColors.White,
+            scrim = LumiColors.Black,
+        )
+    } else {
+        lightColorScheme(
+            primary = accent,
+            onPrimary = onAccent,
+            primaryContainer = lerp(background, accent, 0.16f),
+            onPrimaryContainer = onColor(lerp(background, accent, 0.16f)),
+            secondary = accent,
+            onSecondary = onAccent,
+            background = background,
+            onBackground = ink,
+            surface = background,
+            onSurface = ink,
+            surfaceVariant = surfaceVariant,
+            onSurfaceVariant = ink.copy(alpha = 0.62f),
+            outline = ink.copy(alpha = 0.16f),
+            outlineVariant = ink.copy(alpha = 0.10f),
+            error = LumiColors.Warning,
+            onError = LumiColors.White,
+            scrim = LumiColors.Black,
+        )
+    }
 }

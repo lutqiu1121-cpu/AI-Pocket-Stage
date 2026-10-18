@@ -18,6 +18,7 @@ import dev.chrisbanes.haze.HazeInput
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.glass.GlassStyle
 import dev.chrisbanes.haze.glass.hazeGlass
+import com.lutqiu.lumiread.ui.theme.LocalGlassEnabled
 import com.lutqiu.lumiread.ui.theme.LumiColors
 
 /**
@@ -28,7 +29,7 @@ import com.lutqiu.lumiread.ui.theme.LumiColors
  * 2. 极低透明度底色叠加（来自当前 MaterialTheme 的 surface，深浅主题自适应）；
  * 3. 四周边缘高光描边（线性渐变 border，模拟玻璃厚度与折射）。
  *
- * 用法：内容容器加 [dev.chrisbanes.haze.hazeSource]，玻璃面板调用本组件即可实时采样其后方像素。
+ * 6 维主题里的「玻璃质感开关」关闭时，自动退化为纯色 surface 面板，不采样背景。
  */
 @OptIn(ExperimentalHazeApi::class)
 @Composable
@@ -41,8 +42,10 @@ fun LiquidGlassPanel(
 ) {
     val scheme = MaterialTheme.colorScheme
     val dark = scheme.background.luminance() < 0.5f
+    val glassEnabled = LocalGlassEnabled.current
 
     val tint = when {
+        !glassEnabled -> scheme.surface
         dark && strong -> LumiColors.GlassTintDarkStrong
         dark -> LumiColors.GlassTintDark
         strong -> LumiColors.GlassTintStrong
@@ -63,18 +66,20 @@ fun LiquidGlassPanel(
         }
     }
 
+    val borderBrush = Brush.linearGradient(listOf(edge, edgeSoft, edge))
+
     Box(
         modifier = modifier
             .clip(shape)
-            .hazeGlass(input = HazeInput.Sources(hazeState), style = style)
+            .then(
+                if (glassEnabled) {
+                    Modifier.hazeGlass(input = HazeInput.Sources(hazeState), style = style)
+                } else {
+                    Modifier.background(scheme.surface)
+                },
+            )
             .background(tint)
-            .border(
-                width = 1.dp,
-                brush = Brush.linearGradient(
-                    listOf(edge, edgeSoft, edge),
-                ),
-                shape = shape,
-            ),
+            .border(width = 1.dp, brush = borderBrush, shape = shape),
         content = content,
     )
 }

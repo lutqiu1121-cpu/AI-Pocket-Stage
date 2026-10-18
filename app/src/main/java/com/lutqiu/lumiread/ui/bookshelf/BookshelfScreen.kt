@@ -54,6 +54,7 @@ import com.lutqiu.lumiread.data.ReadingMode
 import com.lutqiu.lumiread.services.ParserService
 import com.lutqiu.lumiread.ui.components.PageHeader
 import com.lutqiu.lumiread.ui.theme.LumiColors
+import com.lutqiu.lumiread.ui.theme.lumiShape
 import kotlinx.coroutines.launch
 
 private const val TAG = "BookshelfScreen"
@@ -224,7 +225,7 @@ private fun ImportButton(importing: Boolean, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(50))
+            .clip(lumiShape())
             .background(scheme.primary)
             .clickable(enabled = !importing, onClick = onClick)
             .padding(horizontal = 18.dp, vertical = 10.dp),
@@ -254,13 +255,13 @@ private fun BookRow(
 ) {
     val scheme = MaterialTheme.colorScheme
     Surface(
-        shape = RoundedCornerShape(14.dp),
+        shape = lumiShape(),
         color = scheme.surface,
         border = BorderStroke(1.dp, scheme.outlineVariant),
         shadowElevation = 1.dp,
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
+            .clip(lumiShape())
             .clickable(onClick = onClick),
     ) {
         Row(
@@ -316,9 +317,9 @@ private fun ModeChip(mode: ReadingMode, onSelect: (ReadingMode) -> Unit) {
     val scheme = MaterialTheme.colorScheme
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(50))
+            .clip(lumiShape())
             .background(scheme.surfaceVariant)
-            .border(1.dp, scheme.outline, RoundedCornerShape(50))
+            .border(1.dp, scheme.outline, lumiShape())
             .padding(2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -331,11 +332,11 @@ private fun ModeChip(mode: ReadingMode, onSelect: (ReadingMode) -> Unit) {
 private fun ModeSegment(label: String, selected: Boolean, onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(50))
+            .clip(lumiShape())
             .background(if (selected) LumiColors.BlueDeep else LumiColors.Transparent)
             .then(
                 if (selected) {
-                    Modifier.border(2.dp, LumiColors.BlueSoft, RoundedCornerShape(50))
+                    Modifier.border(2.dp, LumiColors.BlueSoft, lumiShape())
                 } else {
                     Modifier
                 },

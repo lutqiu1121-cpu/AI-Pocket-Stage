@@ -296,4 +296,22 @@ class ParserServiceTest {
         val chapters = ParserService.assembleEpubChapters(emptyList(), spine)
         assertEquals(2, chapters.size)
     }
+
+    @Test
+    fun headingScoring_doesNotStripCommaOrQuestionMark() {
+        // 逗号 / 问号不剔除，只做轻度扣分
+        assertTrue(ParserService.scoreHeadingLine("第一章，雨夜？") >= 60)
+    }
+
+    @Test
+    fun headingScoring_rejectsTitleLongerThan25Chars() {
+        val line = "第一章 " + "这是一个特别特别长的标题用来模拟正文句子被误判".repeat(2)
+        assertEquals(0, ParserService.scoreHeadingLine(line))
+    }
+
+    @Test
+    fun headingScoring_rejectsSentenceLikeLine() {
+        // 有句末标点 + 偏长，综合评分必须低于阈值，不能被切章
+        assertTrue(ParserService.scoreHeadingLine("第一章 他推开门，看见屋里没有人。") < 60)
+    }
 }

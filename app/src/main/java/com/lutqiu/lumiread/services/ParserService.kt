@@ -25,22 +25,30 @@ object ParserService {
     const val PARSER_VERSION = 7
 
     /**
-     * 复合章节标题（Legado 风格）：
-     * 行首最多 5 个空白 + 标题关键词 + 行尾最多 30 字。
-     * 关键词覆盖：第 X 章节回卷 / 楔子 / 序章 / 前言 / 尾声 / 番外 / 后记。
+     * 候选标题行（移植 Legado / zh-chapter-splitter 的「候选 + 评分」思路）：
+     * 行首最多 5 个空白 + 标题关键词；长度、标点、长句都交给 [scoreHeadingLine] 综合评分，
+     * 不再用一条写死的正则直接判定。
      */
     private val CHAPTER_HEADING = Regex(
-        """(?m)^[ \t]{0,5}(第[0-9一二三四五六七八九十百千万]+[章|节|回卷]|楔子|序章|前言|尾声|番外|后记)[^\n]{0,30}$""",
+        """(?m)^[ \t]{0,5}(第[0-9零一二三四五六七八九十百千万两]+[章|节|回卷集部篇]|楔子|序章|前言|引言|尾声|后记|番外)[^\n]*$""",
     )
 
-    /** 行首章节标题（多行模式）：把单个巨大 XHTML 二次切章用。 */
-    private val HEADING_LINE = Regex("""(?m)^第[0-9一二三四五六七八九十百千万]+[章|节|回卷].*""")
+    /** 标题关键词（评分第一维）。 */
+    private val HEADING_KEYWORD = Regex(
+        """^(第[0-9零一二三四五六七八九十百千万两]+[章|节|回卷集部篇]|楔子|序章|前言|引言|尾声|后记|番外)""",
+    )
+
+    /** 连续这么多个字没有标点 → 视为长句（正文特征）。 */
+    private val LONG_SENTENCE = Regex("""[^，。！？；：、,.!?;:]{20,}""")
 
     /** Ghost chapter 阈值：正文短于该字符数（只有几句话）视为正文误判。 */
     private const val GHOST_MIN_CHARS = 60
 
-    /** 标题最大长度：超过说明是把正文句子误判成标题。 */
-    private const val TITLE_MAX_CHARS = 30
+    /** 标题最大字数：超过即判为正文（用户要求 >25 字判正文）。 */
+    private const val TITLE_MAX_CHARS = 25
+
+    /** 综合评分阈值。 */
+    private const val HEADING_SCORE_THRESHOLD = 60
 
     /** 目录 / 导航 / 封面页的文件名特征 —— 这些是书的结构元数据，绝不能当正文。 */
     private val SKIP_PATH_KEYWORDS = listOf("toc", "nav", "cover")
@@ -155,7 +163,9 @@ object ParserService {
     internal fun splitTxt(text: String): List<Chapter> {
         if (text.isBlank()) return emptyList()
 
-        val marks = CHAPTER_HEADING.findAll(text).toList()
+        val marks = CHAPTER_HEADING.findAll(text)
+            .filter { scoreHeadingLine(it.value) >= HEADING_SCORE_THRESHOLD }
+            .toList()
         if (marks.isEmpty()) {
             return listOf(Chapter(index = 0, title = "正文", content = normalizeParagraphs(text)))
         }
@@ -181,6 +191,42 @@ object ParserService {
             )
         }
         return mergeGhostChapters(raw)
+    }
+
+    /**
+     * 多维标题评分（移植 Legado / zh-chapter-splitter 思路，不写死单一正则）：
+     *
+     * - 行首空白 >5 → 0 分（正文特征）；
+     * - 标题 >25 字 → 0 分（整句正文）；
+     * - 必须命中标题关键词 → 基础分；
+     * - 短标题加分，含逗号/问号**不剔除**，只做轻度扣分；
+     * - 句末标点 + 长句（连续 20 字无标点）重扣，防止整句正文被误判成章。
+     */
+    internal fun scoreHeadingLine(line: String): Int {
+        val trimmed = line.trim()
+        if (trimmed.isEmpty()) return 0
+
+        val leading = line.indexOfFirst { !it.isWhitespace() }
+        if (leading < 0 || leading > 5) return 0
+        if (trimmed.length > TITLE_MAX_CHARS) return 0
+        if (!HEADING_KEYWORD.containsMatchIn(trimmed)) return 0
+
+        var score = 50
+        if (trimmed.length <= 15) score += 20 else score += 8
+
+        // 逗号 / 问号等不剔除，只轻微扣分
+        val punctuation = trimmed.count { it in "，、,；;：:" }
+        score -= punctuation.coerceAtMost(3) * 3
+
+        // 句末标点 + 偏长的行，更像正文句子
+        val sentenceEnd = trimmed.lastOrNull() in listOf('。', '！', '？', '!', '?', '…')
+        if (sentenceEnd && trimmed.length > 10) score -= 25
+        if (sentenceEnd && trimmed.length > 18) score -= 15
+
+        // 长句：连续 20 字没有标点 → 正文特征
+        if (LONG_SENTENCE.containsMatchIn(trimmed)) score -= 30
+
+        return score.coerceAtLeast(0)
     }
 
     /**
@@ -432,7 +478,9 @@ object ParserService {
     internal fun splitByHeading(text: String, fallbackTitle: String = "正文"): List<Chapter> {
         if (text.isBlank()) return emptyList()
 
-        val marks = HEADING_LINE.findAll(text).toList()
+        val marks = CHAPTER_HEADING.findAll(text)
+            .filter { scoreHeadingLine(it.value) >= HEADING_SCORE_THRESHOLD }
+            .toList()
         if (marks.size < 2) {
             return listOf(Chapter(index = 0, title = fallbackTitle, content = text.trim()))
         }

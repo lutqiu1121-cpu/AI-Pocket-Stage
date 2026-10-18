@@ -51,11 +51,11 @@ import dev.chrisbanes.haze.HazeState
 import kotlin.math.roundToInt
 import com.lutqiu.lumiread.data.Chapter
 import com.lutqiu.lumiread.data.ReaderSettings
-import com.lutqiu.lumiread.data.ReaderTheme
+import com.lutqiu.lumiread.data.ReaderPagingMode
 import com.lutqiu.lumiread.data.ApiConfig
 import com.lutqiu.lumiread.ui.components.LiquidGlassPanel
 import com.lutqiu.lumiread.ui.theme.LumiColors
-import com.lutqiu.lumiread.ui.theme.readerScheme
+import com.lutqiu.lumiread.ui.theme.lumiShape
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 沉浸式控制台（液态玻璃）
@@ -75,9 +75,7 @@ fun ReaderConsole(
     chapters: List<Chapter>,
     currentChapter: Int,
     settings: ReaderSettings,
-    readerTheme: ReaderTheme,
     onSettingsChange: (ReaderSettings) -> Unit,
-    onReaderThemeChange: (ReaderTheme) -> Unit,
     onJumpChapter: (Int) -> Unit,
 ) {
     var page by remember { mutableIntStateOf(PAGE_HOME) }
@@ -138,9 +136,7 @@ fun ReaderConsole(
 
             PAGE_INTERFACE -> ConsoleInterface(
                 settings = settings,
-                readerTheme = readerTheme,
                 onSettingsChange = onSettingsChange,
-                onReaderThemeChange = onReaderThemeChange,
             )
 
             PAGE_SETTINGS -> ConsoleSettings(settings = settings, onSettingsChange = onSettingsChange)
@@ -231,7 +227,7 @@ private fun ConsoleAction(glyph: String, label: String, onClick: () -> Unit) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .clip(RoundedCornerShape(14.dp))
+            .clip(lumiShape())
             .clickable(onClick = onClick)
             .padding(horizontal = 18.dp, vertical = 8.dp),
     ) {
@@ -262,7 +258,7 @@ private fun ConsoleToc(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
+                        .clip(lumiShape(0.7f))
                         .clickable { onSelect(index) }
                         .background(if (current) scheme.primary.copy(alpha = 0.16f) else LumiColors.Transparent)
                         .padding(horizontal = 12.dp, vertical = 12.dp),
@@ -297,9 +293,7 @@ private fun ConsoleToc(
 @Composable
 private fun ConsoleInterface(
     settings: ReaderSettings,
-    readerTheme: ReaderTheme,
     onSettingsChange: (ReaderSettings) -> Unit,
-    onReaderThemeChange: (ReaderTheme) -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
     Column(
@@ -373,45 +367,25 @@ private fun ConsoleInterface(
 
         Spacer(Modifier.height(10.dp))
 
-        Text("翻页动画", style = TextStyle(color = scheme.onSurfaceVariant, fontSize = 12.sp))
+        Text("阅读模式", style = TextStyle(color = scheme.onSurfaceVariant, fontSize = 12.sp))
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ConsoleChip("覆盖", selected = false, enabled = false, onClick = {})
-            ConsoleChip("滑动", selected = false, enabled = false, onClick = {})
-            ConsoleChip("仿真", selected = false, enabled = false, onClick = {})
             ConsoleChip(
                 "滚动",
-                selected = settings.pageAnimation == 3,
-                onClick = { onSettingsChange(settings.copy(pageAnimation = 3)) },
+                selected = settings.pagingMode == ReaderPagingMode.SCROLL,
+                onClick = { onSettingsChange(settings.copy(pagingMode = ReaderPagingMode.SCROLL)) },
             )
             ConsoleChip(
                 "无动画",
-                selected = settings.pageAnimation == 4,
-                onClick = { onSettingsChange(settings.copy(pageAnimation = 4)) },
+                selected = settings.pagingMode == ReaderPagingMode.PAGED,
+                onClick = { onSettingsChange(settings.copy(pagingMode = ReaderPagingMode.PAGED)) },
             )
         }
         Spacer(Modifier.height(6.dp))
         Text(
-            "覆盖 / 滑动 / 仿真 暂未开放（当前为竖向滚动）",
+            "无动画：左 40% 上一页 / 右 40% 下一页 / 中间 20% 呼出控制台",
             style = TextStyle(color = scheme.onSurfaceVariant.copy(alpha = 0.7f), fontSize = 10.sp),
         )
-
-        Spacer(Modifier.height(16.dp))
-
-        Text(
-            "阅读器主题（与全局 App 主题独立）",
-            style = TextStyle(color = scheme.onSurfaceVariant, fontSize = 12.sp),
-        )
-        Spacer(Modifier.height(10.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            ReaderTheme.entries.forEach { theme ->
-                ThemeDot(
-                    theme = theme,
-                    selected = theme == readerTheme,
-                    onClick = { onReaderThemeChange(theme) },
-                )
-            }
-        }
 
         Spacer(Modifier.height(28.dp))
     }
@@ -498,34 +472,6 @@ private fun ConsoleChip(
     }
 }
 
-@Composable
-private fun ThemeDot(theme: ReaderTheme, selected: Boolean, onClick: () -> Unit) {
-    val scheme = MaterialTheme.colorScheme
-    val dotScheme = readerScheme(theme)
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(
-            modifier = Modifier
-                .size(32.dp)
-                .clip(CircleShape)
-                .background(dotScheme.background)
-                .border(
-                    width = if (selected) 2.dp else 1.dp,
-                    color = if (selected) scheme.primary else scheme.onSurfaceVariant.copy(alpha = 0.4f),
-                    shape = CircleShape,
-                )
-                .clickable(onClick = onClick),
-        )
-        Spacer(Modifier.height(6.dp))
-        Text(
-            text = theme.label,
-            style = TextStyle(
-                fontSize = 10.sp,
-                color = if (selected) scheme.primary else scheme.onSurfaceVariant,
-            ),
-        )
-    }
-}
-
 // ── 设置（AI）───────────────────────────────────────────────────────────────
 
 @Composable
@@ -579,9 +525,7 @@ fun ReaderConsoleOverlay(
     chapters: List<Chapter>,
     currentChapter: Int,
     settings: ReaderSettings,
-    readerTheme: ReaderTheme,
     onSettingsChange: (ReaderSettings) -> Unit,
-    onReaderThemeChange: (ReaderTheme) -> Unit,
     onJumpChapter: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -612,7 +556,7 @@ fun ReaderConsoleOverlay(
             LiquidGlassPanel(
                 hazeState = hazeState,
                 modifier = Modifier.fillMaxWidth().navigationBarsPadding(),
-                shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
+                shape = lumiShape(),
                 strong = true,
             ) {
                 Column {
@@ -620,9 +564,7 @@ fun ReaderConsoleOverlay(
                         chapters = chapters,
                         currentChapter = currentChapter,
                         settings = settings,
-                        readerTheme = readerTheme,
                         onSettingsChange = onSettingsChange,
-                        onReaderThemeChange = onReaderThemeChange,
                         onJumpChapter = onJumpChapter,
                     )
                 }

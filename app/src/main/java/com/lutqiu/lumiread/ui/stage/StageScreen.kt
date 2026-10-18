@@ -57,13 +57,14 @@ import coil.compose.SubcomposeAsyncImageContent
 import coil.request.ImageRequest
 import com.lutqiu.lumiread.data.ReaderPrefs
 import com.lutqiu.lumiread.data.ReaderSettings
-import com.lutqiu.lumiread.data.ReaderTheme
 import com.lutqiu.lumiread.data.VnLaunch
 import com.lutqiu.lumiread.ui.components.LiquidGlassPanel
 import com.lutqiu.lumiread.ui.reader.ReaderConsoleOverlay
 import com.lutqiu.lumiread.ui.reader.VnSceneController
 import com.lutqiu.lumiread.ui.reader.paragraphsOf
+import com.lutqiu.lumiread.ui.theme.LocalCornerRadius
 import com.lutqiu.lumiread.ui.theme.LumiColors
+import com.lutqiu.lumiread.ui.theme.lumiShape
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
@@ -87,8 +88,6 @@ import java.io.File
 @Composable
 fun StageScreen(
     vn: VnLaunch,
-    readerTheme: ReaderTheme,
-    onReaderThemeChange: (ReaderTheme) -> Unit,
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -217,8 +216,8 @@ fun StageScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .shadow(10.dp, RoundedCornerShape(22.dp))
-                            .clip(RoundedCornerShape(22.dp))
+                            .shadow(10.dp, lumiShape())
+                            .clip(lumiShape())
                             .border(
                                 width = 1.dp,
                                 brush = Brush.linearGradient(
@@ -228,7 +227,7 @@ fun StageScreen(
                                         scheme.onSurface.copy(alpha = 0.14f),
                                     ),
                                 ),
-                                shape = RoundedCornerShape(22.dp),
+                                shape = lumiShape(),
                             ),
                     ) {
                         SceneImage(
@@ -251,7 +250,7 @@ fun StageScreen(
                     LiquidGlassPanel(
                         hazeState = hazeState,
                         modifier = Modifier.fillMaxSize(),
-                        shape = RoundedCornerShape(20.dp),
+                        shape = lumiShape(),
                         strong = true,
                     ) {
                         Column(
@@ -301,9 +300,7 @@ fun StageScreen(
                 chapters = vn.book.chapters,
                 currentChapter = chapterIndex,
                 settings = settings,
-                readerTheme = readerTheme,
                 onSettingsChange = { updateSettings(it) },
-                onReaderThemeChange = onReaderThemeChange,
                 onJumpChapter = {
                     chapterIndex = it.coerceIn(0, vn.book.chapters.lastIndex)
                     paraIndex = 0
@@ -315,7 +312,7 @@ fun StageScreen(
     }
 }
 
-/** 场景图：液态玻璃占位 + Loading 圈；图片就绪后 Crossfade 淡入。 */
+/** 场景图：液态玻璃占位 + Loading 圈；图片就绪后直接显示（VN 无翻页动画）。 */
 @Composable
 private fun BoxScope.SceneImage(
     context: Context,
@@ -340,7 +337,6 @@ private fun BoxScope.SceneImage(
     val request = remember(imagePath) {
         ImageRequest.Builder(context)
             .data(File(imagePath))
-            .crossfade(450)
             .build()
     }
     SubcomposeAsyncImage(
@@ -383,7 +379,7 @@ private fun GlassPlaceholder(hazeState: HazeState, hint: String) {
     LiquidGlassPanel(
         hazeState = hazeState,
         modifier = Modifier.fillMaxSize(),
-        shape = RoundedCornerShape(22.dp),
+        shape = lumiShape(),
         strong = false,
     ) {
         Text(
@@ -406,7 +402,7 @@ private fun StageAction(
     LiquidGlassPanel(
         hazeState = hazeState,
         modifier = Modifier.clickable(onClick = onClick),
-        shape = RoundedCornerShape(50),
+        shape = lumiShape(),
         strong = false,
     ) {
         Text(

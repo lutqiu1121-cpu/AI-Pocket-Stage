@@ -32,6 +32,9 @@ class ReaderScrollViewModel : ViewModel() {
     /** 显式跳章时 +1，触发回到顶部；自动追加不会变。 */
     var jumpToken by mutableIntStateOf(0)
 
+    /** 无动画翻页模式下的当前页索引（与滚动位置相互独立，互不覆盖）。 */
+    var pagedPage by mutableIntStateOf(0)
+
     /** 长按选中的段（VN 的基准段 / 日志核对用）。 */
     var anchorChapter by mutableIntStateOf(0)
     var anchorParagraph by mutableIntStateOf(0)
@@ -50,6 +53,7 @@ class ReaderScrollViewModel : ViewModel() {
         chapterIndex = startChapter
         loadedChapters = listOf(startChapter)
         jumpToken = 0
+        pagedPage = 0
         anchorChapter = startChapter
         anchorParagraph = 0
         listState = LazyListState()
@@ -66,6 +70,8 @@ class ReaderScrollViewModel : ViewModel() {
     fun jumpTo(index: Int) {
         chapterIndex = index
         loadedChapters = listOf(index)
+        // 跳章必须同时重置两套状态：滚动列表回到顶部 + 翻页模式回到第 0 页
+        pagedPage = 0
         jumpToken += 1
     }
 

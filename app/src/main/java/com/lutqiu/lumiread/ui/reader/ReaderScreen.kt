@@ -17,6 +17,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -38,7 +39,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -62,12 +65,16 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextIndent
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
@@ -82,15 +89,17 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.lutqiu.lumiread.data.Book
+import com.lutqiu.lumiread.data.ReaderPagingMode
 import com.lutqiu.lumiread.data.ReaderPrefs
 import com.lutqiu.lumiread.data.ReaderSettings
-import com.lutqiu.lumiread.data.ReaderTheme
 import com.lutqiu.lumiread.data.VnLaunch
 import com.lutqiu.lumiread.services.AiSceneService
 import com.lutqiu.lumiread.services.HttpStatusException
 import com.lutqiu.lumiread.services.RequestQueue
 import com.lutqiu.lumiread.ui.components.LiquidGlassPanel
+import com.lutqiu.lumiread.ui.theme.LocalCornerRadius
 import com.lutqiu.lumiread.ui.theme.LumiColors
+import com.lutqiu.lumiread.ui.theme.lumiShape
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
@@ -100,12 +109,12 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 阅读器 v0.4.0（双层主题 + 液态玻璃）
+// 阅读器 v0.4.2（双阅读模式 + 6 维主题 + 液态玻璃）
 //
-// · 全部颜色来自 MaterialTheme.colorScheme（阅读器独立配色），零硬编码
-// · 长按正文：该段文字淡蓝高亮 + 文字正上方白色气泡菜单（不是居中 Dialog）
-// · 点屏幕中心 → 全屏液态玻璃控制台（Box + 0.4 遮罩，不是 ModalBottomSheet）
-// · 滚动状态提升到 ReaderScrollViewModel，VN 往返逐像素回位
+// 滚动模式：LazyColumn 竖向滑动，随滑动实时更新进度
+// 无动画模式：按页切分文字，点左 40% 上一页 / 右 40% 下一页，瞬间切换
+// 两种模式：点中间 20% 区域呼出控制台；长按段落淡蓝高亮 + 气泡菜单
+// 滚动状态与翻页状态都提升到 ReaderScrollViewModel，VN 往返精准回位
 // ─────────────────────────────────────────────────────────────────────────────
 
 private const val TAG = "ReaderScroll"
@@ -125,12 +134,24 @@ private data class MenuTarget(
     val press: Offset,
 )
 
+/** 无动画模式的一页文字切片。 */
+internal data class PagedChunk(
+    val paragraphIndex: Int,
+    val text: String,
+    val firstChunk: Boolean,
+)
+
+internal data class PagedPage(val chunks: List<PagedChunk>)
+
+/** 无动画模式的页面缓存（供点击区域读取当前页数）。 */
+private class PagedViewState {
+    var pages by mutableStateOf<List<PagedPage>>(emptyList())
+}
+
 @Composable
 fun ReaderScreen(
     book: Book,
     scroll: ReaderScrollViewModel,
-    readerTheme: ReaderTheme,
-    onReaderThemeChange: (ReaderTheme) -> Unit,
     onBack: () -> Unit,
     onOpenVn: (VnLaunch) -> Unit,
     modifier: Modifier = Modifier,
@@ -158,12 +179,15 @@ fun ReaderScreen(
         onDispose { controller?.show(WindowInsetsCompat.Type.systemBars()) }
     }
 
-    // 排版参数：启动时从 SharedPreferences 读，改动即写回
     var settings by remember { mutableStateOf(ReaderPrefs.load(context)) }
     fun updateSettings(next: ReaderSettings) {
         settings = next
         ReaderPrefs.save(context, next)
     }
+
+    val paged = settings.pagingMode == ReaderPagingMode.PAGED
+    val pagedState = remember { PagedViewState() }
+    var pendingLastPage by remember { mutableStateOf(false) }
 
     val lastIndex = (book.chapters.size - 1).coerceAtLeast(0)
     val startIndex = initialChapterIndex.coerceIn(0, lastIndex)
@@ -197,13 +221,14 @@ fun ReaderScreen(
         }
     }
 
-    // 显式跳章：回到列表顶部
+    // 显式跳章：回到列表顶部（滚动模式）
     LaunchedEffect(scroll.jumpToken) {
         if (scroll.jumpToken > 0) listState.scrollToItem(0)
     }
 
-    // 无感知续章：倒数第 2 段可见时追加下一章
-    LaunchedEffect(listState, items.size, loadedChapters) {
+    // 无感知续章：倒数第 2 段可见时追加下一章（仅滚动模式）
+    LaunchedEffect(listState, items.size, loadedChapters, paged) {
+        if (paged) return@LaunchedEffect
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
             .collect { lastVisible ->
                 if (lastVisible >= items.size - 2) {
@@ -252,27 +277,64 @@ fun ReaderScreen(
         }
     }
 
-    // 底栏：跟随当前可见段落所在章
+    // 底栏：跟随当前可见段落所在章（滚动模式）或当前页（无动画模式）
     val firstVisible = listState.firstVisibleItemIndex
     val firstItem = items.getOrNull(firstVisible)
     val visibleChapterIndex = firstItem?.chapterIndex ?: scroll.chapterIndex
     val chapterItems = items.filter { it.chapterIndex == visibleChapterIndex }
     val chapterStartIndex = items.indexOfFirst { it.chapterIndex == visibleChapterIndex }
     val withinChapter = (firstVisible - chapterStartIndex).coerceAtLeast(0)
-    val percent = if (chapterItems.isEmpty()) 100
+    val scrollPercent = if (chapterItems.isEmpty()) 100
     else ((withinChapter + 1) * 100 / chapterItems.size).coerceIn(0, 100)
 
-    var nowText by remember { mutableStateOf(formatClock(LocalTime.now())) }
-    LaunchedEffect(toastMessage) {
-        if (toastMessage != null) {
-            delay(2200)
-            toastMessage = null
+    // 阅读模式切换：两套状态各自复位，绝不互相覆盖
+    var lastPaged by remember { mutableStateOf(paged) }
+    LaunchedEffect(paged) {
+        if (paged) {
+            if (!lastPaged) {
+                // 滚动 → 无动画：以当前可见章为基准，从第 0 页开始
+                val target = firstItem?.chapterIndex ?: scroll.chapterIndex
+                scroll.chapterIndex = target
+                scroll.pagedPage = 0
+            }
+        } else if (lastPaged) {
+            // 无动画 → 滚动：强制重置列表到当前章顶部，避免旧 ScrollState 卡死
+            scroll.jumpTo(scroll.chapterIndex)
+        }
+        lastPaged = paged
+    }
+
+    // 页码越界保护 / 向前翻页需要跳到上一章最后一页
+    LaunchedEffect(pagedState.pages, scroll.chapterIndex, paged) {
+        if (!paged) return@LaunchedEffect
+        val lastPage = (pagedState.pages.size - 1).coerceAtLeast(0)
+        if (pendingLastPage) {
+            scroll.pagedPage = lastPage
+            pendingLastPage = false
+        } else if (scroll.pagedPage > lastPage) {
+            scroll.pagedPage = lastPage
         }
     }
+
+    val shownPercent = if (paged) {
+        val total = pagedState.pages.size
+        if (total <= 1) 100 else ((scroll.pagedPage + 1) * 100 / total).coerceIn(0, 100)
+    } else {
+        scrollPercent
+    }
+    val shownChapter = if (paged) scroll.chapterIndex else visibleChapterIndex
+
+    var nowText by remember { mutableStateOf(formatClock(LocalTime.now())) }
     LaunchedEffect(Unit) {
         while (true) {
             nowText = formatClock(LocalTime.now())
             delay(30_000)
+        }
+    }
+    LaunchedEffect(toastMessage) {
+        if (toastMessage != null) {
+            delay(2200)
+            toastMessage = null
         }
     }
 
@@ -308,8 +370,9 @@ fun ReaderScreen(
         scroll.jumpTo(index.coerceIn(0, lastIndex))
     }
 
-    // pointerInput(Unit) 不会随重组重启，命中逻辑必须读最新 items
     val currentItems by rememberUpdatedState(items)
+    val pagedNow by rememberUpdatedState(paged)
+    val consoleNow = consoleVisible
 
     BackHandler(enabled = consoleVisible) { consoleVisible = false }
 
@@ -321,109 +384,127 @@ fun ReaderScreen(
                 detectTapGestures(
                     onTap = { offset ->
                         val width = size.width.toFloat()
-                        val height = size.height.toFloat()
-                        val isCenterClick = offset.x > width * 0.2f && offset.x < width * 0.8f &&
-                            offset.y > height * 0.2f && offset.y < height * 0.8f
-                        if (isCenterClick) {
-                            consoleVisible = true
-                        } else {
-                            chromeVisible = !chromeVisible
+                        val x = offset.x / width
+                        when {
+                            // 中间 20%（40%~60%）→ 控制台，两种模式一致
+                            x in 0.4f..0.6f -> consoleVisible = true
+                            // 无动画模式：左侧 40% 上一页，右侧 40% 下一页
+                            pagedNow && x < 0.4f -> {
+                                if (scroll.pagedPage > 0) {
+                                    scroll.pagedPage -= 1
+                                } else if (scroll.chapterIndex > 0) {
+                                    scroll.jumpTo(scroll.chapterIndex - 1)
+                                    pendingLastPage = true
+                                }
+                            }
+                            pagedNow && x > 0.6f -> {
+                                val lastPage = pagedState.pages.lastIndex
+                                if (scroll.pagedPage < lastPage) {
+                                    scroll.pagedPage += 1
+                                } else if (scroll.chapterIndex < book.chapters.lastIndex) {
+                                    scroll.jumpTo(scroll.chapterIndex + 1)
+                                }
+                            }
+                            !pagedNow -> chromeVisible = !chromeVisible
                         }
                     },
                     onLongPress = { offset ->
-                        // 命中手指下那一段（只对当前组合出来的可见段落做矩形命中）
                         val hit = itemBounds.entries
                             .firstOrNull { (_, rect) -> rect.contains(offset) }
                         if (hit != null) {
-                            val item = currentItems.firstOrNull {
-                                boundKey(it.chapterIndex, it.paragraphIndex) == hit.key
-                            }
-                            if (item != null) {
+                            val target = resolveMenuTarget(hit.key, book, currentItems)
+                            if (target != null) {
                                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                scroll.rememberAnchor(item.chapterIndex, item.paragraphIndex)
-                                menuTarget = MenuTarget(
-                                    chapterIndex = item.chapterIndex,
-                                    paragraphIndex = item.paragraphIndex,
-                                    text = item.text,
-                                    press = offset,
-                                )
+                                scroll.rememberAnchor(target.chapterIndex, target.paragraphIndex)
+                                menuTarget = target.copy(press = offset)
                             }
                         }
                     },
                 )
             },
     ) {
-        LazyColumn(
-            state = listState,
-            modifier = Modifier
-                .fillMaxSize()
-                .hazeSource(hazeState),
-            contentPadding = PaddingValues(
-                start = settings.marginDp.dp,
-                end = settings.marginDp.dp,
-                top = if (chromeVisible) 72.dp else 24.dp,
-                bottom = if (chromeVisible) 64.dp else 28.dp,
-            ),
-            verticalArrangement = Arrangement.spacedBy(settings.paragraphSpacing.dp),
-        ) {
-            itemsIndexed(
-                items = items,
-                key = { _, item -> boundKey(item.chapterIndex, item.paragraphIndex) },
-            ) { index, item ->
-                val isChapterStart = index == 0 || items[index - 1].chapterIndex != item.chapterIndex
-                val selected = menuTarget?.let {
-                    it.chapterIndex == item.chapterIndex && it.paragraphIndex == item.paragraphIndex
-                } == true
-                val key = boundKey(item.chapterIndex, item.paragraphIndex)
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .onGloballyPositioned { itemBounds[key] = it.boundsInRoot() },
-                ) {
-                    DisposableEffect(key) {
-                        onDispose { itemBounds.remove(key) }
-                    }
-                    if (isChapterStart) {
-                        val title = book.chapters.getOrNull(item.chapterIndex)?.title.orEmpty()
-                        if (title.isNotBlank()) {
-                            Text(
-                                text = title,
-                                modifier = Modifier.padding(bottom = 6.dp),
-                                style = TextStyle(
-                                    color = ink,
-                                    fontSize = (settings.fontSize + 6).sp,
-                                    lineHeight = (settings.fontSize + 16).sp,
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 0.3.sp,
-                                ),
-                            )
+        if (paged) {
+            // 无动画模式：单页文字，不滚动，无任何翻页动画
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(
+                        start = settings.marginDp.dp,
+                        end = settings.marginDp.dp,
+                        top = if (chromeVisible) 72.dp else 28.dp,
+                        bottom = if (chromeVisible) 64.dp else 28.dp,
+                    )
+                    .hazeSource(hazeState),
+            ) {
+                val chapter = book.chapters.getOrNull(scroll.chapterIndex)
+                if (chapter != null) {
+                    PagedContent(
+                        chapterIndex = scroll.chapterIndex,
+                        chapterContent = chapter.content,
+                        settings = settings,
+                        pageIndex = scroll.pagedPage,
+                        selectedParagraph = menuTarget
+                            ?.takeIf { it.chapterIndex == scroll.chapterIndex }
+                            ?.paragraphIndex,
+                        itemBounds = itemBounds,
+                        onPages = { pagedState.pages = it },
+                        widthPx = constraints.maxWidth,
+                        heightPx = constraints.maxHeight,
+                    )
+                }
+            }
+        } else {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .hazeSource(hazeState),
+                contentPadding = PaddingValues(
+                    start = settings.marginDp.dp,
+                    end = settings.marginDp.dp,
+                    top = if (chromeVisible) 72.dp else 24.dp,
+                    bottom = if (chromeVisible) 64.dp else 28.dp,
+                ),
+                verticalArrangement = Arrangement.spacedBy(settings.paragraphSpacing.dp),
+            ) {
+                itemsIndexed(
+                    items = items,
+                    key = { _, item -> scrollKey(item.chapterIndex, item.paragraphIndex) },
+                ) { index, item ->
+                    val isChapterStart = index == 0 || items[index - 1].chapterIndex != item.chapterIndex
+                    val selected = menuTarget?.let {
+                        it.chapterIndex == item.chapterIndex && it.paragraphIndex == item.paragraphIndex
+                    } == true
+                    val key = scrollKey(item.chapterIndex, item.paragraphIndex)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onGloballyPositioned { itemBounds[key] = it.boundsInRoot() },
+                    ) {
+                        DisposableEffect(key) {
+                            onDispose { itemBounds.remove(key) }
                         }
-                    }
-                    val body: AnnotatedString = if (selected) {
-                        buildAnnotatedString {
-                            withStyle(SpanStyle(background = LumiColors.Highlight)) {
-                                append(item.text)
+                        if (isChapterStart) {
+                            val title = book.chapters.getOrNull(item.chapterIndex)?.title.orEmpty()
+                            if (title.isNotBlank()) {
+                                Text(
+                                    text = title,
+                                    modifier = Modifier.padding(bottom = 6.dp),
+                                    style = TextStyle(
+                                        color = ink,
+                                        fontSize = (settings.fontSize + 6).sp,
+                                        lineHeight = (settings.fontSize + 16).sp,
+                                        fontWeight = FontWeight.Bold,
+                                        letterSpacing = 0.3.sp,
+                                    ),
+                                )
                             }
                         }
-                    } else {
-                        AnnotatedString(item.text)
+                        Text(
+                            text = highlighted(item.text, selected),
+                            style = paragraphStyle(settings, ink),
+                        )
                     }
-                    Text(
-                        text = body,
-                        style = TextStyle(
-                            color = ink,
-                            fontSize = settings.fontSize.sp,
-                            lineHeight = (settings.fontSize * settings.lineHeight).sp,
-                            letterSpacing = settings.letterSpacing.sp,
-                            textIndent = if (settings.indentEnabled) TextIndent(firstLine = 2.em) else TextIndent.None,
-                            textAlign = TextAlign.Justify,
-                            fontWeight = when (settings.fontWeight) {
-                                0 -> FontWeight.Light
-                                2 -> FontWeight.Bold
-                                else -> FontWeight.Normal
-                            },
-                        ),
-                    )
                 }
             }
         }
@@ -448,9 +529,27 @@ fun ReaderScreen(
             ReaderBottomBar(
                 hazeState = hazeState,
                 time = nowText,
-                chapterLabel = "第${visibleChapterIndex + 1}章",
-                percent = percent,
+                chapterLabel = "第${shownChapter + 1}章",
+                percent = shownPercent,
             )
+        }
+
+        // 主题化轻提示（替代系统 Toast，跟随阅读器配色）
+        toastMessage?.let { message ->
+            LiquidGlassPanel(
+                hazeState = hazeState,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 96.dp),
+                shape = RoundedCornerShape(50),
+                strong = true,
+            ) {
+                Text(
+                    text = message,
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+                    style = TextStyle(fontSize = 12.sp, color = scheme.onSurface),
+                )
+            }
         }
 
         // Loading 遮罩
@@ -462,7 +561,7 @@ fun ReaderScreen(
                 contentAlignment = Alignment.Center,
             ) {
                 Surface(
-                    shape = RoundedCornerShape(16.dp),
+                    shape = lumiShape(),
                     color = scheme.surface,
                     border = BorderStroke(1.dp, scheme.outlineVariant),
                 ) {
@@ -485,40 +584,14 @@ fun ReaderScreen(
             }
         }
 
-        // 主题化轻提示（替代系统 Toast，跟随阅读器配色）
-        toastMessage?.let { message ->
-            androidx.compose.animation.AnimatedVisibility(
-                visible = true,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 96.dp),
-                enter = fadeIn(),
-                exit = fadeOut(),
-            ) {
-                LiquidGlassPanel(
-                    hazeState = hazeState,
-                    shape = RoundedCornerShape(50),
-                    strong = true,
-                ) {
-                    Text(
-                        text = message,
-                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
-                        style = TextStyle(fontSize = 12.sp, color = scheme.onSurface),
-                    )
-                }
-            }
-        }
-
-        // 全屏悬浮液态玻璃控制台（不再是 ModalBottomSheet）
+        // 全屏悬浮液态玻璃控制台
         ReaderConsoleOverlay(
-            visible = consoleVisible,
+            visible = consoleNow,
             hazeState = hazeState,
             chapters = book.chapters,
-            currentChapter = visibleChapterIndex,
+            currentChapter = shownChapter,
             settings = settings,
-            readerTheme = readerTheme,
             onSettingsChange = { updateSettings(it) },
-            onReaderThemeChange = onReaderThemeChange,
             onJumpChapter = {
                 jumpTo(it)
                 consoleVisible = false
@@ -556,7 +629,198 @@ fun ReaderScreen(
     }
 }
 
-private fun boundKey(chapter: Int, paragraph: Int) = "$chapter-$paragraph"
+// ── 无动画分页 ──────────────────────────────────────────────────────────────
+
+@Composable
+private fun PagedContent(
+    chapterIndex: Int,
+    chapterContent: String,
+    settings: ReaderSettings,
+    pageIndex: Int,
+    selectedParagraph: Int?,
+    itemBounds: MutableMap<String, Rect>,
+    onPages: (List<PagedPage>) -> Unit,
+    widthPx: Int,
+    heightPx: Int,
+) {
+    val ink = MaterialTheme.colorScheme.onBackground
+    val density = LocalDensity.current
+    val measurer = rememberTextMeasurer()
+    val baseStyle = paragraphStyle(settings, ink)
+    val indentStyle = baseStyle.copy(
+        textIndent = if (settings.indentEnabled) TextIndent(firstLine = 2.em) else TextIndent.None,
+    )
+    val spacingPx = with(density) { settings.paragraphSpacing.dp.toPx() }
+
+    val paragraphs = remember(chapterContent) { paragraphsOf(chapterContent) }
+
+    val pages = remember(chapterContent, baseStyle, indentStyle, widthPx, heightPx, spacingPx) {
+        paginateParagraphs(
+            paragraphs = paragraphs,
+            pageHeight = heightPx.toFloat(),
+            spacing = spacingPx,
+            measure = { text, firstChunk ->
+                val style = if (firstChunk) indentStyle else baseStyle
+                measurer.measure(
+                    text = AnnotatedString(text),
+                    style = style,
+                    constraints = Constraints(maxWidth = widthPx),
+                ).size.height.toFloat()
+            },
+            split = { text ->
+                val layout = measurer.measure(
+                    text = AnnotatedString(text),
+                    style = indentStyle,
+                    constraints = Constraints(maxWidth = widthPx),
+                )
+                if (layout.size.height <= heightPx) listOf(text)
+                else splitTextByLines(layout, text, heightPx.toFloat())
+            },
+        )
+    }
+
+    // 把页面信息同步给点击区域（SideEffect 在绘制前生效）
+    SideEffect { onPages(pages) }
+
+    val page = pages.getOrNull(pageIndex) ?: pages.firstOrNull() ?: PagedPage(emptyList())
+
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(settings.paragraphSpacing.dp),
+    ) {
+        page.chunks.forEachIndexed { chunkIndex, chunk ->
+            val key = pagedKey(chapterIndex, chunk.paragraphIndex, chunkIndex)
+            val selected = selectedParagraph == chunk.paragraphIndex
+            val style = if (chunk.firstChunk) indentStyle else baseStyle
+            Text(
+                text = highlighted(chunk.text, selected),
+                style = style,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onGloballyPositioned { itemBounds[key] = it.boundsInRoot() },
+            )
+            DisposableEffect(key) {
+                onDispose { itemBounds.remove(key) }
+            }
+        }
+    }
+}
+
+/**
+ * 分页纯函数（可单测）：
+ * 段落按高度逐块装页；超高段落由 [split] 先按行切成多块，保证任何一页都不溢出。
+ */
+internal fun paginateParagraphs(
+    paragraphs: List<String>,
+    pageHeight: Float,
+    spacing: Float,
+    measure: (text: String, firstChunk: Boolean) -> Float,
+    split: (text: String) -> List<String>,
+): List<PagedPage> {
+    if (paragraphs.isEmpty()) return listOf(PagedPage(emptyList()))
+
+    val pages = mutableListOf<PagedPage>()
+    var current = mutableListOf<PagedChunk>()
+    var used = 0f
+
+    paragraphs.forEachIndexed { paragraphIndex, paragraph ->
+        val chunks = split(paragraph).ifEmpty { listOf("") }
+        chunks.forEachIndexed { chunkIndex, chunk ->
+            val height = measure(chunk, chunkIndex == 0)
+            val extra = if (current.isEmpty()) 0f else spacing
+            if (current.isNotEmpty() && used + extra + height > pageHeight) {
+                pages += PagedPage(current)
+                current = mutableListOf()
+                used = 0f
+            }
+            current += PagedChunk(
+                paragraphIndex = paragraphIndex,
+                text = chunk,
+                firstChunk = chunkIndex == 0,
+            )
+            used += if (current.size == 1) height else height + spacing
+        }
+    }
+
+    if (current.isNotEmpty()) pages += PagedPage(current)
+    return pages.ifEmpty { listOf(PagedPage(emptyList())) }
+}
+
+/** 按行把超高文本切成一页能容纳的块。 */
+private fun splitTextByLines(layout: TextLayoutResult, text: String, maxHeight: Float): List<String> {
+    val out = mutableListOf<String>()
+    var startLine = 0
+    while (startLine < layout.lineCount) {
+        var endLine = startLine
+        val top = layout.getLineTop(startLine)
+        while (endLine < layout.lineCount && layout.getLineBottom(endLine) - top <= maxHeight) {
+            endLine++
+        }
+        if (endLine == startLine) endLine = startLine + 1
+        val startChar = layout.getLineStart(startLine)
+        val endChar = layout.getLineEnd(endLine - 1, visibleEnd = false)
+        if (endChar > startChar) {
+            out += text.substring(startChar, endChar).trimEnd()
+        }
+        startLine = endLine
+    }
+    return out.ifEmpty { listOf(text) }
+}
+
+// ── 样式 / 工具 ─────────────────────────────────────────────────────────────
+
+private fun paragraphStyle(settings: ReaderSettings, ink: androidx.compose.ui.graphics.Color): TextStyle =
+    TextStyle(
+        color = ink,
+        fontSize = settings.fontSize.sp,
+        lineHeight = (settings.fontSize * settings.lineHeight).sp,
+        letterSpacing = settings.letterSpacing.sp,
+        textAlign = TextAlign.Justify,
+        fontWeight = when (settings.fontWeight) {
+            0 -> FontWeight.Light
+            2 -> FontWeight.Bold
+            else -> FontWeight.Normal
+        },
+    )
+
+@Composable
+private fun highlighted(text: String, selected: Boolean): AnnotatedString {
+    // 高亮色跟随「阅读器重点色」，透明度固定 20%
+    val highlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+    return if (selected) {
+        buildAnnotatedString {
+            withStyle(SpanStyle(background = highlight)) { append(text) }
+        }
+    } else {
+        AnnotatedString(text)
+    }
+}
+
+private fun scrollKey(chapter: Int, paragraph: Int) = "$chapter-$paragraph"
+
+private fun pagedKey(chapter: Int, paragraph: Int, chunk: Int) = "p-$chapter-$paragraph-$chunk"
+
+private fun resolveMenuTarget(
+    key: String,
+    book: Book,
+    items: List<ReaderItem>,
+): MenuTarget? {
+    val parts = key.split("-")
+    return if (parts.firstOrNull() == "p") {
+        val chapter = parts.getOrNull(1)?.toIntOrNull() ?: return null
+        val paragraph = parts.getOrNull(2)?.toIntOrNull() ?: return null
+        val text = book.chapters.getOrNull(chapter)
+            ?.let { paragraphsOf(it.content).getOrNull(paragraph) }
+            ?: return null
+        MenuTarget(chapter, paragraph, text, Offset.Zero)
+    } else {
+        val chapter = parts.getOrNull(0)?.toIntOrNull() ?: return null
+        val paragraph = parts.getOrNull(1)?.toIntOrNull() ?: return null
+        val item = items.firstOrNull { it.chapterIndex == chapter && it.paragraphIndex == paragraph }
+            ?: return null
+        MenuTarget(chapter, paragraph, item.text, Offset.Zero)
+    }
+}
 
 private fun friendlyError(t: Throwable): String = when {
     t is HttpStatusException && t.code == 401 -> "智谱鉴权失败（401）：请检查 API Key"
@@ -575,6 +839,69 @@ internal fun paragraphsOf(content: String): List<String> {
         content.split('\n')
     }
     return split.map { it.replace('\n', ' ').trim() }.filter { it.isNotEmpty() }
+}
+
+// ── 顶栏 / 底栏 ─────────────────────────────────────────────────────────────
+
+@Composable
+private fun ReaderTopBar(hazeState: HazeState, onBack: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val radius = LocalCornerRadius.current
+    LiquidGlassPanel(
+        hazeState = hazeState,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(bottomStart = radius, bottomEnd = radius),
+        strong = true,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .height(52.dp)
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(
+                modifier = Modifier
+                    .clip(lumiShape())
+                    .clickable(onClick = onBack)
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("‹", style = TextStyle(fontSize = 22.sp, color = scheme.onSurface, fontWeight = FontWeight.Light))
+                Spacer(Modifier.width(4.dp))
+                Text("返回", style = TextStyle(fontSize = 14.sp, color = scheme.onSurface))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReaderBottomBar(
+    hazeState: HazeState,
+    time: String,
+    chapterLabel: String,
+    percent: Int,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val radius = LocalCornerRadius.current
+    LiquidGlassPanel(
+        hazeState = hazeState,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(topStart = radius, topEnd = radius),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 24.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(time, style = TextStyle(fontSize = 11.sp, color = scheme.onSurfaceVariant))
+            Text(
+                "$chapterLabel $percent%",
+                style = TextStyle(fontSize = 11.sp, color = scheme.onSurfaceVariant),
+            )
+        }
+    }
 }
 
 // ── 气泡菜单 ────────────────────────────────────────────────────────────────
@@ -606,7 +933,7 @@ private fun TextBubbleMenu(onGenerate: () -> Unit, onCopy: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Surface(
-            shape = RoundedCornerShape(10.dp),
+            shape = lumiShape(),
             color = scheme.surface,
             shadowElevation = 10.dp,
             border = BorderStroke(1.dp, scheme.outlineVariant),
@@ -641,72 +968,11 @@ private fun BubbleAction(text: String, onClick: () -> Unit) {
     Text(
         text = text,
         modifier = Modifier
-            .clip(RoundedCornerShape(10.dp))
+            .clip(lumiShape())
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 11.dp),
         style = TextStyle(fontSize = 13.sp, color = scheme.onSurface, fontWeight = FontWeight.Medium),
     )
-}
-
-// ── 顶栏 / 底栏 ─────────────────────────────────────────────────────────────
-
-@Composable
-private fun ReaderTopBar(hazeState: HazeState, onBack: () -> Unit) {
-    val scheme = MaterialTheme.colorScheme
-    LiquidGlassPanel(
-        hazeState = hazeState,
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(bottomStart = 20.dp, bottomEnd = 20.dp),
-        strong = true,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .height(52.dp)
-                .padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .clickable(onClick = onBack)
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("‹", style = TextStyle(fontSize = 22.sp, color = scheme.onSurface, fontWeight = FontWeight.Light))
-                Spacer(Modifier.width(4.dp))
-                Text("返回", style = TextStyle(fontSize = 14.sp, color = scheme.onSurface))
-            }
-        }
-    }
-}
-
-@Composable
-private fun ReaderBottomBar(
-    hazeState: HazeState,
-    time: String,
-    chapterLabel: String,
-    percent: Int,
-) {
-    val scheme = MaterialTheme.colorScheme
-    LiquidGlassPanel(
-        hazeState = hazeState,
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 24.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text(time, style = TextStyle(fontSize = 11.sp, color = scheme.onSurfaceVariant))
-            Text(
-                "$chapterLabel $percent%",
-                style = TextStyle(fontSize = 11.sp, color = scheme.onSurfaceVariant),
-            )
-        }
-    }
 }
 
 // ── 上下文抽取（长按 ±2 句）──────────────────────────────────────────────────

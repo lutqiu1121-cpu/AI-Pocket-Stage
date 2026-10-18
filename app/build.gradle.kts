@@ -13,8 +13,8 @@ android {
         applicationId = "com.lutqiu.lumiread"
         minSdk = 29
         targetSdk = 36
-        versionCode = 14
-        versionName = "0.4.0-alpha"
+        versionCode = 16
+        versionName = "0.4.2-alpha"
     }
 
     buildTypes {
